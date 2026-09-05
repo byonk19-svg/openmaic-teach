@@ -20,6 +20,7 @@ CLAUDE.local.md
 /coverage
 
 # Playwright
+/.playwright-cli/
 /test-results/
 /playwright-report/
 /blob-report/
