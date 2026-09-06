@@ -23,8 +23,15 @@ import type { QuizQuestion } from '@/lib/types/stage';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { gradeChoiceQuestions, isShortAnswer, type QuestionResult } from '@/lib/quiz/grading';
 import { renderQuizMathText } from '@/lib/quiz/math-text';
+import {
+  canRestoreReasoningReview,
+  hydrateReasoningAttempt,
+  reasoningReviewKey,
+  runReasoningGateAttempt,
+} from '@/lib/quiz/reasoning-gate-attempt';
 import { writeDraftRecovery } from '@/lib/quiz/persistence';
 import {
+  captureQuizAttemptTail,
   createQuizAttemptWriter,
   loadQuizAttemptState,
   QuizRetryProgressedError,
@@ -142,6 +149,36 @@ async function gradeShortAnswerQuestion(
           : 'Grading service unavailable. Base score given.',
     };
   }
+}
+
+async function gradeReasoningQuestion(q: QuizQuestion, userAnswer: string): Promise<unknown> {
+  const config = getCurrentModelConfig();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-model': config.modelString,
+    'x-api-key': config.apiKey,
+  };
+  if (config.baseUrl) headers['x-base-url'] = config.baseUrl;
+  if (config.providerType) headers['x-provider-type'] = config.providerType;
+  const response = await fetch('/api/quiz-grade', {
+    method: 'POST',
+    headers,
+    signal: AbortSignal.timeout(60000),
+    body: JSON.stringify({
+      question: q.question,
+      userAnswer,
+      points: q.points ?? 1,
+      reasoningGate: q.reasoningGate,
+      language: 'en',
+    }),
+  });
+  if (!response.ok) throw new Error('Reasoning grading failed');
+  const data: unknown = await response.json();
+  if (!data || typeof data !== 'object' || !('success' in data) || data.success !== true) {
+    throw new Error('Invalid grading response envelope');
+  }
+  const { success: _success, ...result } = data;
+  return result;
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
@@ -492,10 +529,12 @@ function ShortAnswerQuestion({
                   <QuizMathText text={result.aiComment} />
                 </p>
               </div>
-              <span className="ml-auto text-xs font-bold text-violet-600 dark:text-violet-400 shrink-0">
-                {result.earned}/{question.points ?? 1}
-                {t('quiz.pointsSuffix')}
-              </span>
+              {!question.reasoningGate && (
+                <span className="ml-auto text-xs font-bold text-violet-600 dark:text-violet-400 shrink-0">
+                  {result.earned}/{question.points ?? 1}
+                  {t('quiz.pointsSuffix')}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -573,8 +612,13 @@ function QuestionCard({
                 : question.type === 'multiple'
                   ? t('quiz.multipleChoice')
                   : t('quiz.shortAnswer')}
-              {' · '}
-              {pts} {t('quiz.pointsSuffix')}
+              {!question.reasoningGate && (
+                <>
+                  {' '}
+                  {' · '}
+                  {pts} {t('quiz.pointsSuffix')}
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -698,6 +742,26 @@ function ScoreBanner({
 
 export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
   const { t, locale } = useI18n();
+  const gateRequested = questions.some((q) => q.reasoningGate !== undefined);
+  const gateQuestion =
+    gateRequested && questions.length === 1 && questions[0].type === 'short_answer'
+      ? questions[0]
+      : undefined;
+  const gateConfig = gateQuestion?.reasoningGate;
+  const validGate =
+    !!gateConfig &&
+    typeof gateConfig.rubric === 'string' &&
+    !!gateConfig.rubric.trim() &&
+    Number.isFinite(gateConfig.passThreshold) &&
+    gateConfig.passThreshold >= 0 &&
+    gateConfig.passThreshold <= 1;
+  const [gateFeedback, setGateFeedback] = useState<{ feedback: string; followUp?: string } | null>(
+    null,
+  );
+  const gateBusy = useRef(false);
+  const currentGateKey = gateQuestion ? reasoningReviewKey(gateQuestion) : null;
+  const currentGateKeyRef = useRef(currentGateKey);
+  currentGateKeyRef.current = currentGateKey;
 
   const [phase, setPhase] = useState<Phase>('not_started');
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
@@ -724,10 +788,14 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
     let cancelled = false;
     setRuntimeGate({ status: 'loading' });
     setRetrying(false);
+    setGateFeedback(null);
+    gateBusy.current = false;
     void loadQuizAttemptState({ stageId, sceneId })
       .then(({ attemptId: nextAttemptId, state }) => {
         if (cancelled) return;
-        const next = quizViewStateFromAttempt(state);
+        const next = gateQuestion
+          ? hydrateReasoningAttempt(gateQuestion, state)
+          : quizViewStateFromAttempt(state);
         setPhase(next.phase);
         setAnswers(next.answers);
         setResults(next.results);
@@ -742,7 +810,15 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       viewLifetime.invalidate();
       void runtimeWriter.flushDraft();
     };
-  }, [hydrationVersion, runtimeWriter, sceneId, stageId, viewLifetime]);
+  }, [
+    hydrationVersion,
+    runtimeWriter,
+    sceneId,
+    stageId,
+    viewLifetime,
+    gateRequested,
+    gateQuestion,
+  ]);
 
   const attemptId = isQuizRuntimeReady(runtimeGate) ? runtimeGate.attemptId : null;
 
@@ -771,16 +847,62 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
             sceneId,
             attemptId,
             answers: next,
+            ...(gateRequested ? { allowSubmittedDraftRevision: true } : {}),
           });
         }
         return next;
       });
     },
-    [attemptId, runtimeWriter, sceneId, stageId],
+    [attemptId, runtimeWriter, sceneId, stageId, gateRequested],
   );
 
   const handleSubmit = useCallback(async () => {
     if (!attemptId) return;
+    if (gateRequested) {
+      if (!validGate || !gateQuestion || gateBusy.current) return;
+      const answer = answers[gateQuestion.id];
+      if (typeof answer !== 'string' || !answer.trim()) return;
+      gateBusy.current = true;
+      const token = viewLifetime.capture();
+      const gradingKey = currentGateKeyRef.current;
+      setGateFeedback(null);
+      setPhase('submitting');
+      let expectedTail: Awaited<ReturnType<typeof captureQuizAttemptTail>> | undefined;
+      const outcome = await runReasoningGateAttempt(gateQuestion, answer, {
+        saveAnswer: async () => {
+          await runtimeWriter.recordPhase({
+            stageId,
+            sceneId,
+            attemptId,
+            answers,
+            phase: 'draft',
+            allowSubmittedDraftRevision: true,
+          });
+          expectedTail = await captureQuizAttemptTail({ stageId, sceneId, attemptId, answers });
+        },
+        grade: () => gradeReasoningQuestion(gateQuestion, answer),
+        saveReview: async (result) => {
+          if (!viewLifetime.isCurrent(token) || currentGateKeyRef.current !== gradingKey)
+            throw new Error('Question changed');
+          if (!expectedTail) throw new Error('Missing saved answer version');
+          await persistQuizReview(
+            { stageId, sceneId, attemptId, answers, results: [result], expectedTail },
+            runtimeWriter,
+          );
+        },
+      });
+      if (!viewLifetime.isCurrent(token)) return;
+      gateBusy.current = false;
+      if (outcome.phase === 'reviewing') {
+        setResults([outcome.result]);
+        setPhase('reviewing');
+      } else {
+        setResults([]);
+        setGateFeedback(outcome);
+        setPhase('answering');
+      }
+      return;
+    }
     setPhase('submitting');
     await runQuizPersistenceTransition(
       () => persistQuizSubmission({ stageId, sceneId, attemptId, answers }, runtimeWriter),
@@ -791,7 +913,17 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
         setRuntimeGate({ status: 'error' });
       },
     );
-  }, [attemptId, answers, runtimeWriter, sceneId, stageId, viewLifetime]);
+  }, [
+    attemptId,
+    answers,
+    runtimeWriter,
+    sceneId,
+    stageId,
+    viewLifetime,
+    gateRequested,
+    validGate,
+    gateQuestion,
+  ]);
 
   // When entering grading phase, grade choice questions locally + call API for short-answer
   useEffect(() => {
@@ -851,7 +983,8 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       () => persistQuizRetry({ stageId, sceneId, attemptId }, runtimeWriter),
       viewLifetime,
       () => {
-        setPhase('not_started');
+        setPhase(gateRequested ? 'answering' : 'not_started');
+        setGateFeedback(null);
         setAnswers({});
         setResults([]);
         setRetrying(false);
@@ -866,7 +999,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
         setRuntimeGate({ status: 'error' });
       },
     );
-  }, [attemptId, retrying, runtimeWriter, sceneId, stageId, viewLifetime]);
+  }, [attemptId, retrying, runtimeWriter, sceneId, stageId, viewLifetime, gateRequested]);
 
   const earnedScore = useMemo(() => results.reduce((sum, r) => sum + r.earned, 0), [results]);
 
@@ -877,6 +1010,24 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
     });
     return map;
   }, [results]);
+
+  // Render-time guard: effects run after paint, so hydration alone cannot hide
+  // a changed question's analysis during the first render of new props.
+  const displayPhase =
+    gateRequested &&
+    phase === 'reviewing' &&
+    (!gateQuestion || !canRestoreReasoningReview(gateQuestion, results))
+      ? 'answering'
+      : phase;
+
+  if (gateRequested && !validGate) {
+    return (
+      <div role="alert" className="p-6">
+        This reasoning checkpoint requires exactly one short-answer question, a rubric, and a valid
+        pass threshold. The explanation is locked.
+      </div>
+    );
+  }
 
   if (runtimeGate.status === 'error') {
     return (
@@ -904,7 +1055,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
   return (
     <div className="w-full h-full bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-900 overflow-hidden flex flex-col">
       <AnimatePresence mode="wait">
-        {phase === 'not_started' && (
+        {displayPhase === 'not_started' && (
           <motion.div
             key="cover"
             initial={{ opacity: 0 }}
@@ -920,7 +1071,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
           </motion.div>
         )}
 
-        {phase === 'answering' && (
+        {displayPhase === 'answering' && (
           <motion.div
             key="answering"
             initial={{ opacity: 0, x: 20 }}
@@ -963,6 +1114,20 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
 
             {/* Questions */}
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {gateRequested && (
+                <p className="text-sm">
+                  Reasoning checkpoint: explain your evidence, mechanism, and specific next step. An
+                  unfinished answer is restored after reload; resubmit to receive fresh feedback.
+                </p>
+              )}
+              {gateFeedback && (
+                <div role="status" aria-live="polite" className="rounded-lg border p-4">
+                  <p>{gateFeedback.feedback}</p>
+                  {gateFeedback.followUp && (
+                    <p className="mt-2 font-medium">{gateFeedback.followUp}</p>
+                  )}
+                </div>
+              )}
               {questions.map((q, i) => {
                 if (q.type === 'single') {
                   return (
@@ -1000,7 +1165,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
           </motion.div>
         )}
 
-        {(phase === 'submitting' || phase === 'grading') && (
+        {(displayPhase === 'submitting' || displayPhase === 'grading') && (
           <motion.div
             key="grading"
             initial={{ opacity: 0 }}
@@ -1037,7 +1202,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
           </motion.div>
         )}
 
-        {phase === 'reviewing' && (
+        {displayPhase === 'reviewing' && (
           <motion.div
             key="reviewing"
             initial={{ opacity: 0, x: 20 }}
@@ -1065,7 +1230,9 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
 
             {/* Results */}
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              <ScoreBanner score={earnedScore} total={totalPoints} results={results} />
+              {!gateRequested && (
+                <ScoreBanner score={earnedScore} total={totalPoints} results={results} />
+              )}
 
               {questions.map((q, i) => {
                 const r = resultMap[q.id];

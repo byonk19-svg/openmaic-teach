@@ -6,6 +6,8 @@ export interface QuestionResult {
   status: 'correct' | 'incorrect';
   earned: number;
   aiComment?: string;
+  /** Only explicit validated reasoning passes carry this question/rubric binding. */
+  reasoningReviewKey?: string;
 }
 
 export function arraysEqual(a: string[], b: string[]): boolean {

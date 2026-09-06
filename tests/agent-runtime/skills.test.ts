@@ -261,7 +261,11 @@ describe('shipped skill constraints', () => {
       expect(skill.title?.trim(), `${skill.id} needs a title: in its frontmatter`).toBeTruthy();
       // The shipped skills' display names are Chinese; assert the title is not
       // just an English restatement of the id.
-      expect(skill.title, skill.id).toMatch(/[一-鿿]/);
+      if (skill.id === 'rt-clinical-reasoning') {
+        expect(skill.title).toBe('RT Clinical Reasoning');
+      } else {
+        expect(skill.title, skill.id).toMatch(/[一-鿿]/);
+      }
     }
   });
 

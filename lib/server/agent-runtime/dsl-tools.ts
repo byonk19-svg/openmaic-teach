@@ -3,6 +3,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Action } from '@/lib/types/action';
 import type { Scene, SlideContent } from '@/lib/types/stage';
 import { validateAppScene } from '@/lib/document-store/validators';
+import { validateReasoningGate } from '@/lib/quiz/reasoning-gate';
 import type { CourseDocument, CourseToolDeps } from './course-tools';
 import { putSceneBringingCurrent } from './document-writes';
 import { runStageMutation } from './mutation-fence';
@@ -449,6 +450,7 @@ function validationError(scene: Scene): string | null {
         'answer',
         'analysis',
         'commentPrompt',
+        'reasoningGate',
         'hasAnswer',
         'points',
       ];
@@ -460,6 +462,16 @@ function validationError(scene: Scene): string | null {
       }
       if (typeof question.id !== 'string' || typeof question.question !== 'string') {
         return `/content/questions/${index}: id and question must be strings`;
+      }
+      if (question.reasoningGate !== undefined) {
+        if (scene.content.questions.length !== 1 || question.type !== 'short_answer') {
+          return `/content/questions/${index}/reasoningGate: reasoningGate requires exactly one short_answer question`;
+        }
+        try {
+          validateReasoningGate(question.reasoningGate);
+        } catch (error) {
+          return `/content/questions/${index}/reasoningGate: ${error instanceof Error ? error.message : String(error)}`;
+        }
       }
       if (question.options !== undefined) {
         if (!Array.isArray(question.options))

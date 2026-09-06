@@ -1,0 +1,61 @@
+{
+  "stage": {
+    "id": "stage-reasoning-gate-prototype-20260906",
+    "name": "Reasoning Gate — Disposable Behavior Test",
+    "description": "Instructional workflow test only. Not clinical validation. V1 and V2 are unchanged.",
+    "createdAt": 1788714000000,
+    "updatedAt": 1788714000000,
+    "agentIds": []
+  },
+  "scenes": [
+    {
+      "id": "reasoning-checkpoint",
+      "stageId": "stage-reasoning-gate-prototype-20260906",
+      "type": "quiz",
+      "order": 0,
+      "title": "Interpret the bedside evidence",
+      "actions": [],
+      "content": {
+        "type": "quiz",
+        "questions": [
+          {
+            "id": "reasoning-question",
+            "type": "short_answer",
+            "question": "An awake patient on volume-control ventilation has a scooped inspiratory pressure-time tracing while delivered inspiratory flow remains square and constant. The patient shows accessory muscle use. Describe the waveform finding, explain a likely mechanism, and specify what you would assess or test next and what you would hold constant.",
+            "analysis": "Teaching explanation: connect inspiratory pressure scooping during constant flow to patient demand versus delivered flow. Assess drive, patient and circuit factors; a flow-only experiment must keep unrelated inputs constant. This fixture tests reasoning workflow, not clinical correctness or bedside treatment safety.",
+            "reasoningGate": {
+              "rubric": "Require ALL three: (1) identify inspiratory pressure concavity/scooping with constant delivered flow; (2) explain patient inspiratory demand/effort exceeding delivered flow as the proposed mechanism; (3) name a specific patient/circuit assessment or cautious flow adjustment, with what will be observed and unrelated ventilator/patient variables held constant. Accept equivalent specific wording. Reject generic reassess patient and ventilator, monitor, or adjust settings without specifying what and why. Missing any required element requires revise regardless of verbosity or score. Do not supply the full solution in revision feedback.",
+              "passThreshold": 0.8
+            },
+            "points": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "ordinary-check",
+      "stageId": "stage-reasoning-gate-prototype-20260906",
+      "type": "quiz",
+      "order": 1,
+      "title": "Ordinary quiz regression check",
+      "actions": [],
+      "content": {
+        "type": "quiz",
+        "questions": [
+          {
+            "id": "ordinary-question",
+            "type": "single",
+            "question": "Which number equals two plus two?",
+            "options": [
+              { "label": "Four", "value": "A" },
+              { "label": "Five", "value": "B" }
+            ],
+            "answer": ["A"],
+            "analysis": "Ordinary quiz explanation: two plus two equals four.",
+            "points": 1
+          }
+        ]
+      }
+    }
+  ]
+}

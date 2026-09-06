@@ -193,6 +193,18 @@ export interface QuizOption {
   value: string; // Selection key: "A", "B", "C", "D"
 }
 
+export interface ReasoningGateConfig {
+  /** Required evidence for passing.
+   * @pattern \S
+   */
+  rubric: string;
+  /** Normalized minimum score, in addition to satisfying every required rubric element.
+   * @minimum 0
+   * @maximum 1
+   */
+  passThreshold: number;
+}
+
 export interface QuizQuestion {
   id: string;
   type: 'single' | 'multiple' | 'short_answer';
@@ -201,6 +213,7 @@ export interface QuizQuestion {
   answer?: string[]; // Correct answer values: ["A"], ["A","C"], or undefined for text
   analysis?: string; // Explanation shown after grading
   commentPrompt?: string; // Grading guidance for text questions
+  reasoningGate?: ReasoningGateConfig; // Optional explicit reasoning assessment for short answers
   hasAnswer?: boolean; // Whether auto-grading is possible
   points?: number; // Points per question (default 1)
 }

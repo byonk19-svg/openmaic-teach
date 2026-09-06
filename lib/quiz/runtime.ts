@@ -22,6 +22,11 @@ export interface QuizAttemptPayload extends QuizAttemptSkeleton {
   results?: QuestionResult[];
 }
 
+export interface QuizAttemptTail {
+  sessionId: string;
+  seq: number;
+}
+
 export interface QuizAttemptRecordInput {
   stageId: string;
   sceneId: string;
@@ -31,6 +36,10 @@ export interface QuizAttemptRecordInput {
   results?: QuestionResult[];
   /** Begin a distinct retry even when the prior attempt has the same payload. */
   startNewAttempt?: boolean;
+  /** Guard a reviewed write against the exact saved answer tail; never roll it forward. */
+  expectedTail?: QuizAttemptTail;
+  /** Gated revisions may replace an unfinished legacy submitted answer. */
+  allowSubmittedDraftRevision?: boolean;
 }
 
 export interface LegacyQuizAttemptInput {
@@ -414,6 +423,40 @@ export async function loadQuizAttemptState(
   };
 }
 
+/** Read only: callers must finish saving the answer before capturing its tail. */
+export async function captureQuizAttemptTail(
+  input: { stageId: string; sceneId: string; attemptId: string; answers?: QuizAnswers },
+  deps: QuizAttemptRuntimeDeps = {},
+): Promise<QuizAttemptTail> {
+  const store = deps.store ?? getRuntimeStore();
+  const learnerKey = deps.learnerKey ?? (await getLearnerKey());
+  await awaitQueuedWriterLineage(input.attemptId);
+  await awaitQueuedAttemptLineage(store, input.attemptId);
+  return withAttemptLock(rootAttemptId(input.attemptId), async () => {
+    const state = await readLatestQuizAttemptState(input, store, learnerKey);
+    if (
+      !state ||
+      state.status !== 'active' ||
+      state.phase === 'reviewed' ||
+      rootAttemptId(state.sessionId) !== rootAttemptId(input.attemptId)
+    ) {
+      throw new Error('No unfinished quiz attempt to capture');
+    }
+    const records = await store.listRecords(state.sessionId);
+    const last = records.at(-1);
+    if (!last || last.sceneId !== input.sceneId) throw new Error('Invalid quiz attempt tail');
+    const payload = asQuizPayload(last);
+    if (
+      !payload ||
+      payload.phase === 'reviewed' ||
+      (input.answers !== undefined && !sameAnswers(payload.answers, input.answers))
+    ) {
+      throw new Error('Saved answer changed before grading');
+    }
+    return { sessionId: state.sessionId, seq: last.seq };
+  });
+}
+
 function samePayload(left: QuizAttemptPayload, right: QuizAttemptPayload): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -473,6 +516,55 @@ export async function recordQuizAttempt(
   return enqueue(store, rootId, () =>
     withAttemptLock(rootId, async () => {
       const timestamp = now();
+      if (input.expectedTail) {
+        // Never use the ordinary rollover/retry path for a delayed assessment.
+        // The append CAS below must still see the exact saved answer revision.
+        const expected = input.expectedTail;
+        const current = await readLatestQuizAttemptState(input, store, learnerKey);
+        if (
+          input.phase !== 'reviewed' ||
+          input.startNewAttempt ||
+          !current ||
+          current.sessionId !== expected.sessionId ||
+          current.status !== 'active' ||
+          current.phase === 'reviewed' ||
+          rootAttemptId(expected.sessionId) !== rootId
+        ) {
+          throw new Error('Reasoning attempt changed; resubmit the answer');
+        }
+        const records = await store.listRecords(expected.sessionId);
+        const last = records.at(-1);
+        const saved = asQuizPayload(last);
+        if (
+          !last ||
+          last.seq !== expected.seq ||
+          last.sceneId !== input.sceneId ||
+          !saved ||
+          saved.phase === 'reviewed' ||
+          !sameAnswers(saved.answers, input.answers)
+        ) {
+          throw new Error('Reasoning answer changed; resubmit the answer');
+        }
+        await store.appendRecord(
+          {
+            id: mintRecordId(),
+            sessionId: expected.sessionId,
+            sceneId: input.sceneId,
+            createdAt: timestamp,
+            payload: {
+              payloadVersion: 1,
+              phase: 'reviewed',
+              answers: input.answers,
+              results: input.results ?? [],
+            },
+          },
+          {
+            expectedLastSeq: expected.seq,
+            sessionTransition: { status: 'completed', updatedAt: timestamp },
+          },
+        );
+        return;
+      }
       const latestState = input.startNewAttempt
         ? await readLatestQuizAttemptState(input, store, learnerKey)
         : undefined;
@@ -571,7 +663,16 @@ export async function recordQuizAttempt(
         }
 
         if (session.status === 'active') {
-          if (last && PHASE_ORDER[payload.phase] < PHASE_ORDER[last.phase]) return;
+          if (
+            last &&
+            PHASE_ORDER[payload.phase] < PHASE_ORDER[last.phase] &&
+            !(
+              input.allowSubmittedDraftRevision &&
+              payload.phase === 'draft' &&
+              last.phase === 'submitted'
+            )
+          )
+            return;
 
           // An active session with a reviewed tail can exist from an older
           // client that appended before its separate completion write. Heal

@@ -520,6 +520,92 @@ describe('patch_stage', () => {
     expect(current.putScene).not.toHaveBeenCalled();
   });
 
+  it('accepts a reasoningGate patch on a single short_answer question', async () => {
+    const scene = quizScene();
+    (scene.content as QuizContent).questions = [
+      { id: 'q1', type: 'short_answer', question: 'Explain the evidence and next assessment.' },
+    ];
+    const current = state(course([scene]));
+    const gate = {
+      rubric: 'Require evidence, mechanism, and a specific assessment.',
+      passThreshold: 0.8,
+    };
+    const result = await tool(dslTools(current.store), 'patch_stage').execute('add-gate', {
+      target: '/scenes/scene_quiz',
+      intent: 'Attach the omitted reasoning gate',
+      ops: [{ op: 'set', path: '/content/questions/0/reasoningGate', value: gate }],
+    });
+    expect(result).not.toHaveProperty('isError');
+    expect(current.putScene).toHaveBeenCalledTimes(1);
+    expect((current.get().scenes[0].content as QuizContent).questions[0]).toMatchObject({
+      reasoningGate: gate,
+    });
+  });
+
+  it.each([
+    null,
+    {},
+    { rubric: ' ', passThreshold: 0.8 },
+    { rubric: 42, passThreshold: 0.8 },
+    { rubric: 'Evidence', passThreshold: '0.8' },
+    { rubric: 'Evidence', passThreshold: -0.1 },
+    { rubric: 'Evidence', passThreshold: 1.1 },
+    { rubric: 'Evidence', passThreshold: 0.8, extra: true },
+  ])('rejects invalid reasoningGate config %j without writing', async (gate) => {
+    const scene = quizScene();
+    (scene.content as QuizContent).questions = [
+      { id: 'q1', type: 'short_answer', question: 'Explain.' },
+    ];
+    const current = state(course([scene]));
+    const before = structuredClone(current.get());
+    const result = await tool(dslTools(current.store), 'patch_stage').execute('invalid-gate', {
+      target: '/scenes/scene_quiz',
+      intent: 'Validate gate configuration',
+      ops: [
+        { op: 'set', path: '/content/questions/0/question', value: 'Must not persist' },
+        { op: 'set', path: '/content/questions/0/reasoningGate', value: gate },
+      ],
+    });
+    expect(result).toMatchObject({ isError: true });
+    expect(textOf(result)).toContain('/content/questions/0/reasoningGate');
+    expect(current.putScene).not.toHaveBeenCalled();
+    expect(current.get()).toEqual(before);
+  });
+
+  it.each(['single', 'multiple', 'multi-question'])(
+    'rejects reasoningGate on %s quizzes',
+    async (kind) => {
+      const scene = quizScene();
+      const question = {
+        id: 'q1',
+        type: kind === 'multi-question' ? 'short_answer' : kind,
+        question: 'Explain.',
+        reasoningGate: { rubric: 'Evidence and mechanism', passThreshold: 0.8 },
+      };
+      const current = state(course([scene]));
+      const result = await tool(dslTools(current.store), 'patch_stage').execute(
+        'incompatible-gate',
+        {
+          target: '/scenes/scene_quiz',
+          intent: 'Validate gate placement',
+          ops: [
+            {
+              op: 'set',
+              path: '/content/questions',
+              value:
+                kind === 'multi-question'
+                  ? [question, { id: 'q2', type: 'short_answer', question: 'Another question.' }]
+                  : [question],
+            },
+          ],
+        },
+      );
+      expect(result).toMatchObject({ isError: true });
+      expect(textOf(result)).toContain('reasoningGate requires exactly one short_answer question');
+      expect(current.putScene).not.toHaveBeenCalled();
+    },
+  );
+
   it('rejects wrong optional quiz field types at the final validation barrier', async () => {
     const current = state();
     const patch = tool(dslTools(current.store), 'patch_stage');
