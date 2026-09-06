@@ -1,7 +1,8 @@
 ---
 name: rt-clinical-reasoning
-title: "RT Clinical Reasoning"
 description: Design native OpenMAIC clinical reasoning courses for practicing ICU respiratory therapists, with short-answer checkpoints before ventilator waveform and physiology simulations. Use for RT case interpretation, measurement validity, and controlled causal experiments.
+metadata:
+  title: "RT Clinical Reasoning"
 ---
 
 # RT clinical reasoning
@@ -112,6 +113,58 @@ restore the declared experiment baseline and derived outputs together, with clea
 feedback; it must not silently create a new patient or preserve stale results.
 Changing the clinical case requires fresh reasoning for that case.
 
+## Linked scenario continuity
+
+When a downstream interactive simulation represents the **same patient and clinical state**
+as an earlier checkpoint, pass `generate_scene` an explicit `continuity` contract. Do not rely
+on repeating prose in `brief` or `materialFacts`. Use stable, concise canonical names for
+baseline and variable keys across the contract and `widgetOutline`. The contract identifies
+the earlier source page, the baseline values that must be implemented, the variables that stay
+fixed, model assumptions that may not be contradicted, and the abnormal finding that must still
+be present before the learner changes a control.
+
+Do not attach a continuity contract to unrelated cases. If the patient, clinical state, or
+baseline intentionally changes, use a new `scenarioId` and state the transition explicitly.
+Never reuse a prior scenario ID to imply continuity that does not exist.
+
+For example, the linked simulation call for a previously established flow-demand case should
+carry a shape like this (adapt the actual facts to the case):
+
+```json
+{
+  "stageId": "stage-example",
+  "order": 2,
+  "title": "Test one ventilator variable",
+  "type": "interactive",
+  "widgetType": "simulation",
+  "widgetOutline": {
+    "concept": "Effect of set inspiratory flow on the established pressure waveform",
+    "keyVariables": ["flow (L/min)"]
+  },
+  "brief": "Reproduce the established baseline first, then let the learner vary set inspiratory flow only.",
+  "continuity": {
+    "scenarioId": "flow-demand-case",
+    "sourceSceneOrder": 1,
+    "baseline": [
+      { "name": "flow", "value": 60, "unit": "L/min" },
+      { "name": "VT", "value": 450, "unit": "mL" },
+      { "name": "RR", "value": 20, "unit": "/min" },
+      { "name": "PEEP", "value": 8, "unit": "cm H2O" }
+    ],
+    "fixedVariables": ["VT", "RR", "PEEP", "compliance", "resistance", "respiratory drive", "sedation", "comfort"],
+    "assumptions": ["patient inspiratory flow demand exceeds 60 L/min at baseline"],
+    "expectedBaselineFindings": ["inspiratory pressure scooping remains present at the 60 L/min baseline"]
+  }
+}
+```
+
+The application requires the generated `widget-config` to echo the continuity metadata and
+checks it before persistence. A semantic check evaluates consistency with the declared
+contract, not whether the contract is clinically correct. If `generate_scene` returns a
+continuity violation, use its listed violations to regenerate the complete page; do not patch
+clinical or model values silently after generation. Inspect the persisted source afterward and
+verify that baseline, controls, presets, calculations, assumptions, and baseline findings agree.
+
 ## Measurement and model honesty
 
 Distinguish **set** inputs, **calculated** values (formula and source inputs),
@@ -139,8 +192,8 @@ Inspect every initial, tooltip, preset, reset, and post-gate state for English
 controls, answer leakage, causal confounding, and measurement-label errors.
 
 The sibling `outline-constraints.json` uses only existing structural fields. It
-checks quiz presence, simulation presence/type, populated simulation outline
-fields, and adjacent simulations. It does **not** prove checkpoint adjacency,
+checks quiz presence, permits only the simulation widget type, checks populated
+simulation outline fields when present, and rejects adjacent simulations. It does **not** prove checkpoint adjacency,
 rubric quality, English-only controls, answer hiding, runtime gating, or clinical
 correctness. Validate those separately; do not invent constraint fields to imply
 they are enforced.

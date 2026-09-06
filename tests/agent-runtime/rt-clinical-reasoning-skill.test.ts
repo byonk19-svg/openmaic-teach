@@ -129,4 +129,34 @@ describe('built-in RT clinical reasoning skill', () => {
     expect(content.questions[0].reasoningGate.rubric.trim().length).toBeGreaterThan(0);
     expect(content.questions[0].options).toBeUndefined();
   });
+
+  it('provides a machine-readable continuity contract for linked simulations only', async () => {
+    const skill = await findSkill('rt-clinical-reasoning');
+    const jsonBlocks = [...skill!.content.matchAll(/```json\s*([\s\S]*?)```/g)].map((match) =>
+      JSON.parse(match[1]),
+    );
+    const linked = jsonBlocks.find((value) => value?.continuity?.scenarioId);
+    expect(linked).toMatchObject({
+      type: 'interactive',
+      widgetType: 'simulation',
+      continuity: {
+        scenarioId: expect.any(String),
+        sourceSceneOrder: 1,
+        baseline: expect.arrayContaining([{ name: 'flow', value: 60, unit: 'L/min' }]),
+        fixedVariables: expect.arrayContaining(['VT', 'RR', 'PEEP']),
+        assumptions: expect.arrayContaining([expect.any(String)]),
+        expectedBaselineFindings: expect.arrayContaining([expect.any(String)]),
+      },
+    });
+    expect(linked.continuity.assumptions.join(' ')).toContain('exceeds');
+    expect(linked.continuity.expectedBaselineFindings.join(' ')).toContain('baseline');
+  });
+
+  it('requires a new scenario id for intentional state changes and no contract for unrelated cases', async () => {
+    const skill = await findSkill('rt-clinical-reasoning');
+    expect(skill!.content).toContain('same patient and clinical state');
+    expect(skill!.content).toContain('new `scenarioId`');
+    expect(skill!.content).toContain('Do not attach a continuity contract to unrelated cases');
+    expect(skill!.content).toContain('continuity violation');
+  });
 });

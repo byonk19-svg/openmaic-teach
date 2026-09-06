@@ -10,6 +10,30 @@ import {
   filterKnownActions,
 } from '@/lib/server/agent-runtime/generation-tools';
 import type { Scene } from '@/lib/types/stage';
+import type { SceneContinuityContract } from '@/lib/server/agent-runtime/scene-continuity';
+
+const continuity: SceneContinuityContract = {
+  scenarioId: 'flow-demand-case',
+  sourceSceneOrder: 1,
+  baseline: [
+    { name: 'flow', value: 60, unit: 'L/min' },
+    { name: 'VT', value: 450, unit: 'mL' },
+  ],
+  fixedVariables: ['VT', 'RR', 'PEEP', 'resistance'],
+  assumptions: ['patient demand exceeds baseline flow'],
+  expectedBaselineFindings: ['pressure scooping is present at baseline'],
+};
+
+function continuityHtml(overrides: Record<string, unknown> = {}) {
+  const widgetConfig = {
+    type: 'simulation',
+    variables: [{ name: 'flow', label: 'Flow', min: 40, max: 90, default: 60, unit: 'L/min' }],
+    presets: [{ name: 'Higher', variables: { flow: 70 } }],
+    continuity: { ...continuity, changingVariables: ['flow'] },
+    ...overrides,
+  };
+  return `<!DOCTYPE html><html><body><input data-var="flow" type="range"><script type="application/json" id="widget-config">${JSON.stringify(widgetConfig)}</script></body></html>`;
+}
 
 function slide(id: string, order: number, title = id): Scene {
   return {
@@ -445,6 +469,296 @@ describe('generation and deck tools', () => {
       false,
     );
     expect(Value.Check(generate.parameters, { ...base, widgetType: 'hologram' })).toBe(false);
+    expect(
+      Value.Check(generate.parameters, {
+        ...base,
+        widgetType: 'simulation',
+        continuity,
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(generate.parameters, {
+        ...base,
+        widgetType: 'simulation',
+        continuity: { ...continuity, baseline: [] },
+      }),
+    ).toBe(false);
+  });
+
+  it('leaves ordinary generate_scene prompts and persistence unchanged', async () => {
+    const current = state(document([]));
+    const prompts: string[] = [];
+    const evaluator = vi.fn();
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async (_system: string, user: string) => {
+            prompts.push(user);
+            return continuityHtml();
+          }),
+          generateActions: vi.fn(async () => []),
+          evaluateContinuity: evaluator,
+        }),
+      ),
+      'generate_scene',
+    );
+    const response = await generate.execute('ordinary', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Ordinary',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Ordinary', keyVariables: ['flow'] },
+      brief: 'No continuity contract.',
+    } as never);
+    expect(response).not.toMatchObject({ isError: true });
+    expect(prompts[0]).not.toContain('AUTHORITATIVE SCENARIO CONTINUITY CONTRACT');
+    expect(evaluator).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(1);
+  });
+
+  it('passes authoritative continuity into generation and persists only after both gates pass', async () => {
+    const current = state(document([slide('source', 1)]));
+    const prompts: string[] = [];
+    const evaluator = vi.fn(async () => ({ decision: 'pass' as const, violations: [] }));
+    const generateActions = vi.fn(async () => []);
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async (_system: string, user: string) => {
+            prompts.push(user);
+            return continuityHtml();
+          }),
+          generateActions,
+          evaluateContinuity: evaluator,
+        }),
+      ),
+      'generate_scene',
+    );
+    const response = await generate.execute('consistent', {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Linked simulation',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+      brief: 'Vary flow in the linked scenario.',
+      continuity,
+    } as never);
+    expect(response).not.toMatchObject({ isError: true });
+    expect(prompts[0]).toContain('AUTHORITATIVE SCENARIO CONTINUITY CONTRACT');
+    expect(prompts[0]).toContain('pressure scooping is present at baseline');
+    expect(evaluator).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contract: continuity,
+        sceneBrief: 'Vary flow in the linked scenario.',
+      }),
+      expect.any(Function),
+      expect.anything(),
+    );
+    expect(generateActions).toHaveBeenCalledOnce();
+    expect(current.get()?.scenes).toHaveLength(2);
+  });
+
+  it('rejects continuity when the declared source page is not persisted', async () => {
+    const current = state(document([]));
+    const aiCall = vi.fn(async () => continuityHtml());
+    const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+    const response = await generate.execute('missing-source', {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Linked',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+      brief: 'Linked simulation.',
+      continuity,
+    } as never);
+    expect(response).toMatchObject({
+      isError: true,
+      details: { error: 'continuity-source-missing' },
+    });
+    expect(aiCall).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(0);
+  });
+
+  it.each([
+    ['missing metadata', continuityHtml({ continuity: undefined }), 'widget-config.continuity'],
+    [
+      'baseline mismatch',
+      continuityHtml({
+        continuity: {
+          ...continuity,
+          baseline: [{ name: 'flow', value: 50, unit: 'L/min' }],
+          changingVariables: ['flow'],
+        },
+      }),
+      'baseline flow',
+    ],
+    [
+      'fixed variable control',
+      continuityHtml({
+        variables: [
+          { name: 'flow', label: 'Flow', min: 40, max: 90, default: 60, unit: 'L/min' },
+          { name: 'VT', label: 'VT', min: 300, max: 600, default: 450, unit: 'mL' },
+        ],
+        continuity: { ...continuity, changingVariables: ['flow', 'VT'] },
+      }),
+      'fixed variable VT is adjustable',
+    ],
+  ])(
+    'fails deterministic continuity for %s before actions or persistence',
+    async (_label, html, expected) => {
+      const current = state(document([slide('source', 1)]));
+      const evaluator = vi.fn();
+      const generateActions = vi.fn(async () => []);
+      const generate = find(
+        buildGenerationTools(
+          deps(current.store, {
+            aiCall: vi.fn(async () => html),
+            generateActions,
+            evaluateContinuity: evaluator,
+          }),
+        ),
+        'generate_scene',
+      );
+      const response = await generate.execute('bad', {
+        stageId: 'stage-test',
+        order: 2,
+        title: 'Bad',
+        type: 'interactive',
+        widgetType: 'simulation',
+        widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+        brief: 'Bad linked simulation.',
+        continuity,
+      } as never);
+      expect(response).toMatchObject({
+        isError: true,
+        details: { error: 'continuity-deterministic-revise' },
+      });
+      expect((response.details as { violations: string[] }).violations.join('\n')).toContain(
+        expected,
+      );
+      expect(evaluator).not.toHaveBeenCalled();
+      expect(generateActions).not.toHaveBeenCalled();
+      expect(current.get()?.scenes).toHaveLength(1);
+    },
+  );
+
+  it('returns semantic revise details without persistence', async () => {
+    const current = state(document([slide('source', 1)]));
+    const generateActions = vi.fn(async () => []);
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async () => continuityHtml()),
+          generateActions,
+          evaluateContinuity: vi.fn(async () => ({
+            decision: 'revise' as const,
+            violations: ['At baseline, the expected pressure scoop is absent.'],
+          })),
+        }),
+      ),
+      'generate_scene',
+    );
+    const response = await generate.execute('revise', {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Contradiction',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+      brief: 'Contradictory linked simulation.',
+      continuity,
+    } as never);
+    expect(response).toMatchObject({
+      isError: true,
+      details: {
+        error: 'continuity-semantic-revise',
+        violations: ['At baseline, the expected pressure scoop is absent.'],
+      },
+    });
+    expect(generateActions).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(1);
+  });
+
+  it('does not persist when the call is aborted during semantic evaluation', async () => {
+    const current = state(document([slide('source', 1)]));
+    const controller = new AbortController();
+    const generateActions = vi.fn(async () => []);
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async () => continuityHtml()),
+          generateActions,
+          evaluateContinuity: vi.fn(async () => {
+            controller.abort();
+            return { decision: 'pass' as const, violations: [] };
+          }),
+        }),
+      ),
+      'generate_scene',
+    );
+    await expect(
+      generate.execute(
+        'aborted',
+        {
+          stageId: 'stage-test',
+          order: 2,
+          title: 'Aborted',
+          type: 'interactive',
+          widgetType: 'simulation',
+          widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+          brief: 'Linked simulation.',
+          continuity,
+        } as never,
+        controller.signal,
+      ),
+    ).rejects.toThrow('aborted');
+    expect(generateActions).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      'malformed',
+      vi.fn(async () => {
+        throw new Error('Invalid continuity evaluation result');
+      }),
+    ],
+    [
+      'provider error',
+      vi.fn(async () => {
+        throw new Error('provider unavailable');
+      }),
+    ],
+  ])('fails closed when the semantic evaluator has a %s result', async (_label, evaluator) => {
+    const current = state(document([slide('source', 1)]));
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async () => continuityHtml()),
+          generateActions: vi.fn(async () => []),
+          evaluateContinuity: evaluator,
+        }),
+      ),
+      'generate_scene',
+    );
+    const response = await generate.execute('error', {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Error',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+      brief: 'Linked simulation.',
+      continuity,
+    } as never);
+    expect(response).toMatchObject({
+      isError: true,
+      details: { error: 'continuity-semantic-error' },
+    });
+    expect(current.get()?.scenes).toHaveLength(1);
   });
 
   it('detects slide media placeholders without returning page bodies', () => {

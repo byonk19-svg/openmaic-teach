@@ -30,6 +30,15 @@ import { toGenerationContent } from './generation-content';
 import { checkScenesAgainstSkill } from './skills';
 import { isMediaPlaceholder } from '@/lib/store/media-generation';
 import { createLogger } from '@/lib/logger';
+import {
+  buildContinuityPromptBlock,
+  evaluateSceneContinuity,
+  parseSceneContinuityContract,
+  SceneContinuityContractSchema,
+  validateGeneratedContinuity,
+  type ContinuityEvaluationResult,
+  type SceneContinuityContract,
+} from './scene-continuity';
 
 const MAX_GENERATE_SCENE_MEDIA = 8;
 const SUPPORTED_SCENE_TYPES = new Set(['slide', 'quiz', 'interactive', 'pbl']);
@@ -69,6 +78,7 @@ const SceneParams = Type.Object({
   brief: Type.String({ minLength: 1 }),
   instruction: Type.Optional(Type.String()),
   materialFacts: Type.Optional(Type.Array(Type.String())),
+  continuity: Type.Optional(SceneContinuityContractSchema),
   media: Type.Optional(
     Type.Array(
       Type.Object({
@@ -104,6 +114,11 @@ type ActionGenerator = typeof generateSceneActions;
 export interface GenerationToolDeps extends CourseToolDeps {
   aiCall?: AICallFn;
   generateActions?: ActionGenerator;
+  evaluateContinuity?: (
+    input: Parameters<typeof evaluateSceneContinuity>[0],
+    aiCall: AICallFn,
+    options?: Parameters<typeof evaluateSceneContinuity>[2],
+  ) => Promise<ContinuityEvaluationResult>;
 }
 
 function sceneIdFor(scenes: readonly Scene[], order: number) {
@@ -230,7 +245,7 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
     name: 'generate_scene',
     label: 'Generate page',
     description:
-      'Generate and durably persist one page from an explicit title, type, and brief. Reusing an order replaces that page. Interactive pages accept widgetType (simulation/diagram/code/game/visualization3d) plus a matching widgetOutline object; both are rejected for other page types.',
+      'Generate and durably persist one page from an explicit title, type, and brief. Reusing an order replaces that page. Interactive pages accept widgetType (simulation/diagram/code/game/visualization3d) plus a matching widgetOutline object; both are rejected for other page types. A linked simulation may include a generic continuity contract; it must pass deterministic and semantic consistency checks before persistence.',
     parameters: SceneParams,
     async execute(_callId, params, signal) {
       if (!Number.isInteger(params.order) || params.order < 1) {
@@ -298,6 +313,46 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
           { error: 'invalid-widget-outline' },
           true,
         );
+      }
+      let continuity: SceneContinuityContract | undefined;
+      if (params.continuity !== undefined) {
+        try {
+          continuity = parseSceneContinuityContract(params.continuity);
+        } catch (error) {
+          return result(
+            `The continuity contract is invalid; nothing was written. ${error instanceof Error ? error.message : String(error)}`,
+            { error: 'invalid-continuity-contract' },
+            true,
+          );
+        }
+        if (
+          params.type !== 'interactive' ||
+          (params.widgetType && params.widgetType !== 'simulation')
+        ) {
+          return result(
+            'This prototype accepts continuity only for interactive simulation pages; nothing was written.',
+            { error: 'continuity-requires-simulation' },
+            true,
+          );
+        }
+        if (continuity.sourceSceneOrder >= params.order) {
+          return result(
+            'continuity.sourceSceneOrder must identify an earlier page; nothing was written.',
+            { error: 'invalid-continuity-source-order' },
+            true,
+          );
+        }
+        const sourceSceneOrder = continuity.sourceSceneOrder;
+        if (!doc.scenes.some((scene) => scene.order === sourceSceneOrder)) {
+          return result(
+            'The continuity source page is not persisted in this course; nothing was written.',
+            {
+              error: 'continuity-source-missing',
+              sourceSceneOrder,
+            },
+            true,
+          );
+        }
       }
       const requestedMedia = params.media ?? [];
       if (requestedMedia.length > MAX_GENERATE_SCENE_MEDIA) {
@@ -384,7 +439,15 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
       let content: Awaited<ReturnType<typeof generateSceneContent>>;
       let contentFailure: SceneContentFailureCode | undefined;
       try {
-        content = await generateSceneContent(outline, aiCallFor(sceneContentStage(params.type)), {
+        const sceneAiCall = aiCallFor(sceneContentStage(params.type));
+        const contentAiCall: AICallFn = continuity
+          ? (systemPrompt, userPrompt) =>
+              sceneAiCall(
+                systemPrompt,
+                `${userPrompt}\n\n${buildContinuityPromptBlock(continuity)}`,
+              )
+          : sceneAiCall;
+        content = await generateSceneContent(outline, contentAiCall, {
           agents,
           languageDirective: doc.stage.languageDirective ?? '',
           allowProceduralSkill: true,
@@ -440,6 +503,59 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
           },
           true,
         );
+      }
+      if (continuity) {
+        if (!('html' in content)) {
+          return result(
+            'Continuity-controlled generation did not produce interactive HTML; nothing was written.',
+            {
+              error: 'continuity-deterministic-revise',
+              violations: ['interactive HTML is required'],
+            },
+            true,
+          );
+        }
+        const deterministicViolations = validateGeneratedContinuity(
+          continuity,
+          content.widgetConfig,
+        );
+        if (deterministicViolations.length) {
+          return result(
+            `Continuity check requires regeneration; nothing was written. ${deterministicViolations.join('; ')}`,
+            {
+              error: 'continuity-deterministic-revise',
+              violations: deterministicViolations,
+            },
+            true,
+          );
+        }
+        let semantic: ContinuityEvaluationResult;
+        try {
+          semantic = await (deps.evaluateContinuity ?? evaluateSceneContinuity)(
+            {
+              contract: continuity,
+              widgetConfig: content.widgetConfig,
+              html: content.html,
+              sceneBrief: brief,
+            },
+            aiCallFor('scene-content:interactive'),
+            { timeoutMs: 90_000 },
+          );
+        } catch (error) {
+          return result(
+            `Semantic continuity evaluation failed closed; nothing was written. ${error instanceof Error ? error.message : String(error)}`,
+            { error: 'continuity-semantic-error' },
+            true,
+          );
+        }
+        if (signal?.aborted) throw new Error('aborted');
+        if (semantic.decision !== 'pass') {
+          return result(
+            `Continuity check requires regeneration; nothing was written. ${semantic.violations.join('; ')}`,
+            { error: 'continuity-semantic-revise', violations: semantic.violations },
+            true,
+          );
+        }
       }
       const actions = filterKnownActions(
         await actionGenerator(outline, content, aiCallFor('scene-actions'), {
