@@ -98,6 +98,62 @@ describe('scene generation primitives', () => {
     expect(actions.map((action) => action.type)).toEqual(['widget_highlight', 'widget_setState']);
   });
 
+  it('passes typed simulation controls to the model as authoritative JSON', async () => {
+    let userPrompt = '';
+    const outline = widgetOutline();
+    outline.widgetOutline = {
+      ...outline.widgetOutline,
+      simulationControls: [
+        {
+          name: 'flow',
+          label: 'Set inspiratory flow',
+          min: 30,
+          max: 100,
+          default: 60,
+          unit: 'L/min',
+          step: 5,
+        },
+      ],
+    };
+
+    await generateSceneContent(outline, async (_system, user) => {
+      userPrompt = user;
+      return '<!DOCTYPE html><html><body><script type="application/json" id="widget-config">{"type":"simulation","variables":[]}</script></body></html>';
+    });
+
+    expect(userPrompt).toContain('Authoritative Control Specification');
+    expect(userPrompt).toContain(
+      JSON.stringify(
+        [
+          {
+            name: 'flow',
+            label: 'Set inspiratory flow',
+            min: 30,
+            max: 100,
+            default: 60,
+            unit: 'L/min',
+            step: 5,
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    expect(userPrompt).toContain('numeric defaults exactly');
+    expect(userPrompt).toContain('actual initial and reset state');
+  });
+
+  it('keeps the legacy name-only simulation prompt when typed controls are absent', async () => {
+    let userPrompt = '';
+    await generateSceneContent(widgetOutline(), async (_system, user) => {
+      userPrompt = user;
+      return '<!DOCTYPE html><html><body><script type="application/json" id="widget-config">{"type":"simulation","variables":[]}</script></body></html>';
+    });
+
+    expect(userPrompt).toContain('## Variables to Expose\n\nenergy');
+    expect(userPrompt).not.toContain('Authoritative Control Specification');
+  });
+
   it('generates PBL content with the re-seated single-call planner', async () => {
     const content = await generateSceneContent(pblOutline(), async () => validPBLResponse(), {
       targetLanguage: 'en-US',

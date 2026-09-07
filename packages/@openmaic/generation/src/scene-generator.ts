@@ -1138,17 +1138,24 @@ export async function generateWidgetContent(
   let variables: Record<string, unknown>;
 
   switch (widgetType) {
-    case 'simulation':
+    case 'simulation': {
       promptId = PROMPT_IDS.SIMULATION_CONTENT;
+      const simulationControls = widgetOutline.simulationControls;
       variables = {
         conceptName: widgetOutline.concept || outline.title,
         conceptOverview: outline.description,
         keyPoints: (outline.keyPoints || []).join('\n'),
-        variables: widgetOutline.keyVariables?.join(', ') || '',
+        variables:
+          simulationControls?.map((control) => control.name).join(', ') ||
+          widgetOutline.keyVariables?.join(', ') ||
+          '',
+        simulationControls: simulationControls ?? [],
+        hasSimulationControls: Boolean(simulationControls?.length),
         designIdea: '',
         languageDirective: languageDirective || '',
       };
       break;
+    }
 
     case 'diagram': {
       const prescribedNodes = widgetOutline.nodes ?? [];

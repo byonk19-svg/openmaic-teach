@@ -106,6 +106,7 @@ export type {
   MediaGenerationRequest,
   PdfImage,
   SceneOutline,
+  SimulationVariable,
   UserRequirements,
   WidgetOutline,
   WidgetType,

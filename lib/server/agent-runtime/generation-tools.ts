@@ -12,6 +12,7 @@ import {
   type PdfImage,
   type SceneContentFailureCode,
   type SceneGenerationContext,
+  type SimulationVariable,
 } from '@openmaic/generation';
 
 import { putSceneBringingCurrent } from './document-writes';
@@ -44,6 +45,19 @@ const MAX_GENERATE_SCENE_MEDIA = 8;
 const SUPPORTED_SCENE_TYPES = new Set(['slide', 'quiz', 'interactive', 'pbl']);
 const log = createLogger('AgentGenerationTools');
 
+const SimulationControlParams = Type.Object(
+  {
+    name: Type.String({ minLength: 1 }),
+    label: Type.String({ minLength: 1 }),
+    min: Type.Number(),
+    max: Type.Number(),
+    default: Type.Number(),
+    unit: Type.Optional(Type.String({ minLength: 1 })),
+    step: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
 const SceneParams = Type.Object({
   stageId: Type.String({ description: COURSE_STAGE_ID_DESCRIPTION }),
   order: Type.Integer({ minimum: 1 }),
@@ -73,6 +87,14 @@ const SceneParams = Type.Object({
     Type.Unknown({
       description:
         'Interactive pages only: widget configuration object matching widgetType (e.g. { concept, keyVariables } for simulation, { diagramType, nodes } for diagram, { language } for code, { gameType, challenge } for game, { visualizationType, objects } for visualization3d). Must be a plain object. Defaults to { concept: title } when widgetType is set; when only widgetOutline is set, widgetType defaults to simulation.',
+    }),
+  ),
+  simulationControls: Type.Optional(
+    Type.Array(SimulationControlParams, {
+      minItems: 1,
+      maxItems: 16,
+      description:
+        'Interactive simulation pages only: authoritative adjustable controls. The simulation prompt and generated widget-config must preserve these values exactly.',
     }),
   ),
   brief: Type.String({ minLength: 1 }),
@@ -140,6 +162,74 @@ function duplicateId(sessionId: string | undefined, callId: string) {
 
 function result(text: string, details: Record<string, unknown>, isError = false) {
   return { content: [{ type: 'text' as const, text }], details, ...(isError ? { isError } : {}) };
+}
+
+function validateSimulationControls(controls: readonly SimulationVariable[]): string[] {
+  const violations: string[] = [];
+  const names = new Set<string>();
+  controls.forEach((control, index) => {
+    const prefix = `simulationControls[${index}]`;
+    const name = control.name.trim();
+    if (!name) violations.push(`${prefix}.name must be non-empty`);
+    if (!control.label.trim()) violations.push(`${prefix}.label must be non-empty`);
+    if (name && names.has(name)) violations.push(`${prefix}.name duplicates control ${name}`);
+    if (name) names.add(name);
+    if (!Number.isFinite(control.min) || !Number.isFinite(control.max)) {
+      violations.push(`${prefix} min and max must be finite numbers`);
+    } else if (control.min >= control.max) {
+      violations.push(`${prefix} min must be less than max`);
+    }
+    if (!Number.isFinite(control.default)) {
+      violations.push(`${prefix}.default must be a finite number`);
+    } else if (control.default < control.min || control.default > control.max) {
+      violations.push(`${prefix}.default must be within min and max`);
+    }
+    if (control.step !== undefined && (!Number.isFinite(control.step) || control.step <= 0)) {
+      violations.push(`${prefix}.step must be greater than zero`);
+    }
+  });
+  return violations;
+}
+
+const STRICT_DECIMAL_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u;
+
+function numericBaselineForComparison(value: string | number | boolean): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== 'string') return undefined;
+  const candidate = value.trim();
+  if (!candidate || !STRICT_DECIMAL_NUMBER.test(candidate)) return undefined;
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function validateControlContinuity(
+  controls: readonly SimulationVariable[],
+  continuity: SceneContinuityContract,
+): string[] {
+  const violations: string[] = [];
+  const baseline = new Map(continuity.baseline.map((fact) => [fact.name, fact]));
+  const fixed = new Set(continuity.fixedVariables);
+  for (const control of controls) {
+    const fact = baseline.get(control.name);
+    if (!fact) {
+      violations.push(`control ${control.name} has no matching continuity baseline fact`);
+      continue;
+    }
+    if (control.default !== numericBaselineForComparison(fact.value)) {
+      violations.push(
+        `control ${control.name} default ${control.default} does not match continuity baseline ${fact.value}`,
+      );
+    }
+    if (control.unit !== undefined && control.unit !== fact.unit) {
+      violations.push(
+        `control ${control.name} unit ${control.unit} does not match continuity baseline unit ${fact.unit}`,
+      );
+    }
+    if (fixed.has(control.name)) {
+      violations.push(`control ${control.name} is declared fixed by the continuity contract`);
+    }
+  }
+  return violations;
 }
 
 function outlineFromScene(scene: Scene, snapshot: unknown): SceneOutline {
@@ -245,7 +335,7 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
     name: 'generate_scene',
     label: 'Generate page',
     description:
-      'Generate and durably persist one page from an explicit title, type, and brief. Reusing an order replaces that page. Interactive pages accept widgetType (simulation/diagram/code/game/visualization3d) plus a matching widgetOutline object; both are rejected for other page types. A linked simulation may include a generic continuity contract; it must pass deterministic and semantic consistency checks before persistence.',
+      'Generate and durably persist one page from an explicit title, type, and brief. Reusing an order replaces that page. Interactive pages accept widgetType (simulation/diagram/code/game/visualization3d) plus a matching widgetOutline object; simulations may also provide authoritative simulationControls. Widget fields are rejected for other page types. A linked simulation may include a generic continuity contract; it must pass deterministic and semantic consistency checks before persistence.',
     parameters: SceneParams,
     async execute(_callId, params, signal) {
       if (!Number.isInteger(params.order) || params.order < 1) {
@@ -314,6 +404,28 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
           true,
         );
       }
+      const simulationControls = params.simulationControls as SimulationVariable[] | undefined;
+      if (
+        simulationControls !== undefined &&
+        (params.type !== 'interactive' ||
+          (params.widgetType !== undefined && params.widgetType !== 'simulation'))
+      ) {
+        return result(
+          'generate_scene only accepts simulationControls for interactive simulation pages.',
+          { error: 'simulation-controls-require-simulation' },
+          true,
+        );
+      }
+      if (simulationControls !== undefined) {
+        const violations = validateSimulationControls(simulationControls);
+        if (violations.length) {
+          return result(
+            `The simulation control specification is invalid; nothing was written. ${violations.join('; ')}`,
+            { error: 'invalid-simulation-controls', violations },
+            true,
+          );
+        }
+      }
       let continuity: SceneContinuityContract | undefined;
       if (params.continuity !== undefined) {
         try {
@@ -353,6 +465,16 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
             true,
           );
         }
+        if (simulationControls) {
+          const violations = validateControlContinuity(simulationControls, continuity);
+          if (violations.length) {
+            return result(
+              `The simulation control specification conflicts with continuity; nothing was generated. ${violations.join('; ')}`,
+              { error: 'simulation-control-continuity-conflict', violations },
+              true,
+            );
+          }
+        }
       }
       const requestedMedia = params.media ?? [];
       if (requestedMedia.length > MAX_GENERATE_SCENE_MEDIA) {
@@ -370,14 +492,22 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
         description: brief,
         keyPoints: params.materialFacts ?? [],
         ...(params.type === 'interactive' &&
-        (params.widgetType !== undefined || params.widgetOutline !== undefined)
+        (params.widgetType !== undefined ||
+          params.widgetOutline !== undefined ||
+          simulationControls !== undefined)
           ? {
               widgetType: params.widgetType ?? 'simulation',
               // Mirror the generator fallback so a bare widgetType still generates.
-              widgetOutline: (params.widgetOutline as
-                | SceneOutline['widgetOutline']
-                | undefined) ?? {
-                concept: title,
+              widgetOutline: {
+                ...((params.widgetOutline as SceneOutline['widgetOutline'] | undefined) ?? {
+                  concept: title,
+                }),
+                ...(simulationControls
+                  ? {
+                      keyVariables: simulationControls.map((control) => control.name),
+                      simulationControls,
+                    }
+                  : {}),
               },
             }
           : {}),
@@ -537,6 +667,8 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
               widgetConfig: content.widgetConfig,
               html: content.html,
               sceneBrief: brief,
+              sceneType: 'interactive',
+              widgetType: 'simulation',
             },
             aiCallFor('scene-content:interactive'),
             { timeoutMs: 90_000 },

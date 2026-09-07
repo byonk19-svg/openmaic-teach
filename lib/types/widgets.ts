@@ -3,22 +3,15 @@
  */
 
 import type { WidgetConfigBase } from '@openmaic/dsl';
+import type { SimulationVariable } from '@openmaic/generation';
+
+export type { SimulationVariable } from '@openmaic/generation';
 
 // ==================== Base Types ====================
 
 export type { WidgetType } from '@openmaic/dsl';
 
 // ==================== Simulation Widget ====================
-
-export interface SimulationVariable {
-  name: string;
-  label: string;
-  min: number;
-  max: number;
-  default: number;
-  unit?: string;
-  step?: number;
-}
 
 export interface SimulationConfig extends WidgetConfigBase {
   type: 'simulation';

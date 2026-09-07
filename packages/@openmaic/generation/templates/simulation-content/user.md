@@ -11,7 +11,18 @@ Create a simulation widget for: {{conceptName}}
 ## Variables to Expose
 
 {{variables}}
+{{#if hasSimulationControls}}
+## Authoritative Control Specification
 
+The caller has already specified the complete adjustable-control contract below. Treat this JSON as authoritative rather than inventing or normalizing controls:
+
+{{simulationControls}}
+
+- `widget-config.variables` MUST reproduce each control's name, label, min, max, and numeric defaults exactly.
+- Preserve unit and step exactly when supplied.
+- The generated JavaScript's actual initial and reset state MUST use the same numeric defaults.
+- Presets MUST NOT silently redefine these defaults or the baseline unless the caller explicitly requests that behavior.
+{{/if}}
 ## Design Idea
 
 {{designIdea}}

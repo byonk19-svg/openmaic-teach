@@ -193,6 +193,8 @@ describe('semantic continuity evaluation', () => {
           widgetConfig: config(),
           html: '<html><body>Baseline scoop remains present.</body></html>',
           sceneBrief: 'Vary flow only.',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
         },
         aiCall,
       ),
@@ -202,22 +204,98 @@ describe('semantic continuity evaluation', () => {
     expect(aiCall.mock.calls[0]![1]).toContain('Baseline scoop remains present.');
   });
 
+  it('separates the interactive scene container from its simulation widget in semantic scope', async () => {
+    const aiCall = vi.fn(async () => JSON.stringify({ decision: 'pass', violations: [] }));
+    await expect(
+      evaluateSceneContinuity(
+        {
+          contract,
+          widgetConfig: config(),
+          html: '<html><body>Baseline scoop remains present.</body></html>',
+          sceneBrief: 'Use type interactive with widgetType simulation.',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
+        aiCall,
+      ),
+    ).resolves.toEqual({ decision: 'pass', violations: [] });
+
+    const [systemPrompt, userPrompt] = aiCall.mock.calls[0]!;
+    expect(systemPrompt).toContain(
+      'sceneType = "interactive", widgetType = "simulation", and widgetConfig.type = "simulation"',
+    );
+    expect(systemPrompt).toContain('valid and MUST NOT be reported as a contradiction');
+    expect(systemPrompt).toContain('Deterministic validation exclusively owns');
+    expect(systemPrompt).toContain('qualitative scenario and model continuity');
+    expect(systemPrompt).toContain('Do NOT report structural violations');
+    expect(JSON.parse(userPrompt)).toMatchObject({
+      openMaicStructure: {
+        sceneType: 'interactive',
+        widgetType: 'simulation',
+        widgetConfigType: 'simulation',
+      },
+    });
+  });
+
+  it.each([
+    ['baseline finding', 'The generated baseline removes the required pressure scoop.'],
+    [
+      'model assumption',
+      'The generated model assumes demand equals flow, contradicting the contract.',
+    ],
+  ])('returns revise for a genuine qualitative %s contradiction', async (_label, violation) => {
+    await expect(
+      evaluateSceneContinuity(
+        {
+          contract,
+          widgetConfig: config(),
+          html: '<html><body>Generated qualitative model.</body></html>',
+          sceneBrief: 'Preserve the established patient state.',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
+        async () => JSON.stringify({ decision: 'revise', violations: [violation] }),
+      ),
+    ).resolves.toEqual({ decision: 'revise', violations: [violation] });
+  });
+
   it('fails closed on malformed output, errors, timeout, or oversized HTML', async () => {
     await expect(
       evaluateSceneContinuity(
-        { contract, widgetConfig: config(), html: '<html></html>', sceneBrief: 'Brief' },
+        {
+          contract,
+          widgetConfig: config(),
+          html: '<html></html>',
+          sceneBrief: 'Brief',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
         async () => 'not-json',
       ),
     ).rejects.toThrow();
     await expect(
       evaluateSceneContinuity(
-        { contract, widgetConfig: config(), html: '<html></html>', sceneBrief: 'Brief' },
+        {
+          contract,
+          widgetConfig: config(),
+          html: '<html></html>',
+          sceneBrief: 'Brief',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
         async () => '{"decision":"revise","decision":"pass","violations":[]}',
       ),
     ).rejects.toThrow('Duplicate continuity evaluation key');
     await expect(
       evaluateSceneContinuity(
-        { contract, widgetConfig: config(), html: '<html></html>', sceneBrief: 'Brief' },
+        {
+          contract,
+          widgetConfig: config(),
+          html: '<html></html>',
+          sceneBrief: 'Brief',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
         async () => {
           throw new Error('provider unavailable');
         },
@@ -225,7 +303,14 @@ describe('semantic continuity evaluation', () => {
     ).rejects.toThrow('provider unavailable');
     await expect(
       evaluateSceneContinuity(
-        { contract, widgetConfig: config(), html: '<html></html>', sceneBrief: 'Brief' },
+        {
+          contract,
+          widgetConfig: config(),
+          html: '<html></html>',
+          sceneBrief: 'Brief',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
         () => new Promise(() => {}),
         { timeoutMs: 5 },
       ),
@@ -233,7 +318,14 @@ describe('semantic continuity evaluation', () => {
     const aiCall = vi.fn(async () => JSON.stringify({ decision: 'pass', violations: [] }));
     await expect(
       evaluateSceneContinuity(
-        { contract, widgetConfig: config(), html: 'x'.repeat(120_001), sceneBrief: 'Brief' },
+        {
+          contract,
+          widgetConfig: config(),
+          html: 'x'.repeat(120_001),
+          sceneBrief: 'Brief',
+          sceneType: 'interactive',
+          widgetType: 'simulation',
+        },
         aiCall,
       ),
     ).rejects.toThrow('too large');

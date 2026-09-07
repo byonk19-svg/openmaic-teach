@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Value } from 'typebox/value';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { validateToolArguments } from '@earendil-works/pi-ai';
 
 import type { CourseDocument, CourseStore } from '@/lib/server/agent-runtime/course-tools';
 import { buildDslCourseToolset } from '@/lib/server/agent-runtime/course-tools';
@@ -120,6 +121,48 @@ function deps(store: CourseStore, extra: Record<string, unknown> = {}) {
     })),
     ...extra,
   };
+}
+
+async function runSimulationControlPreflight(baselineValue: string | number, controlDefault = 60) {
+  const current = state(document([slide('source', 1)]));
+  const aiCall = vi.fn(async () => {
+    throw new Error('MOCK_DOWNSTREAM_AI_SEAM_REACHED');
+  });
+  const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+  const prepared = validateToolArguments(generate, {
+    id: 'preflight-probe',
+    name: 'generate_scene',
+    arguments: {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Linked simulation',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow' },
+      simulationControls: [
+        {
+          name: 'flow',
+          label: 'Set inspiratory flow',
+          min: 30,
+          max: 100,
+          default: controlDefault,
+          unit: 'L/min',
+          step: 5,
+        },
+      ],
+      brief: 'Vary flow in the linked scenario.',
+      continuity: {
+        ...continuity,
+        baseline: [{ name: 'flow', value: baselineValue, unit: 'L/min' }],
+      },
+    },
+  });
+  try {
+    const response = await generate.execute('preflight-probe', prepared as never);
+    return { outcome: 'returned' as const, response, aiCall };
+  } catch (error) {
+    return { outcome: 'threw' as const, error, aiCall };
+  }
 }
 
 describe('generation and deck tools', () => {
@@ -483,6 +526,226 @@ describe('generation and deck tools', () => {
         continuity: { ...continuity, baseline: [] },
       }),
     ).toBe(false);
+    expect(
+      (generate.parameters as unknown as { properties?: Record<string, unknown> }).properties,
+    ).toHaveProperty('simulationControls');
+  });
+
+  it('passes typed simulation controls from generate_scene into the simulation prompt', async () => {
+    const current = state(document([]));
+    const prompts: string[] = [];
+    let calls = 0;
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async (_system: string, user: string) => {
+            calls += 1;
+            prompts.push(user);
+            return calls === 1
+              ? '<!DOCTYPE html><html><body><script type="application/json" id="widget-config">{"type":"simulation","variables":[{"name":"flow","label":"Set inspiratory flow","min":30,"max":100,"default":60,"unit":"L/min","step":5}]}</script></body></html>'
+              : '[]';
+          }),
+        }),
+      ),
+      'generate_scene',
+    );
+
+    const response = await generate.execute('typed-controls', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Flow control',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow' },
+      simulationControls: [
+        {
+          name: 'flow',
+          label: 'Set inspiratory flow',
+          min: 30,
+          max: 100,
+          default: 60,
+          unit: 'L/min',
+          step: 5,
+        },
+      ],
+      brief: 'Test one variable.',
+    } as never);
+
+    expect(response).not.toMatchObject({ isError: true });
+    expect(prompts[0]).toContain('Authoritative Control Specification');
+    expect(prompts[0]).toContain('"default": 60');
+    expect(prompts[0]).toContain('"step": 5');
+  });
+
+  it('rejects a typed control that conflicts with continuity before model invocation', async () => {
+    const current = state(document([slide('source', 1)]));
+    const aiCall = vi.fn(async () => continuityHtml());
+    const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+
+    const response = await generate.execute('conflicting-control', {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Linked simulation',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow' },
+      simulationControls: [
+        {
+          name: 'flow',
+          label: 'Set inspiratory flow',
+          min: 30,
+          max: 100,
+          default: 50,
+          unit: 'L/min',
+          step: 5,
+        },
+      ],
+      brief: 'Vary flow in the linked scenario.',
+      continuity,
+    } as never);
+
+    expect(response).toMatchObject({
+      isError: true,
+      details: {
+        error: 'simulation-control-continuity-conflict',
+        violations: [expect.stringContaining('flow default 50')],
+      },
+    });
+    expect(aiCall).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(1);
+  });
+
+  it('preserves equal numeric control and continuity defaults through runner validation', () => {
+    const generate = find(buildGenerationTools(deps(state(document([])).store)), 'generate_scene');
+    const args = validateToolArguments(generate, {
+      id: 'validated-live-shape',
+      name: 'generate_scene',
+      arguments: {
+        stageId: 'stage-test',
+        order: 2,
+        title: 'Linked simulation',
+        type: 'interactive',
+        widgetType: 'simulation',
+        widgetOutline: { concept: 'Flow' },
+        simulationControls: [
+          {
+            name: 'flow',
+            label: 'Set inspiratory flow',
+            min: 30,
+            max: 100,
+            default: 60,
+            unit: 'L/min',
+            step: 5,
+          },
+        ],
+        brief: 'Vary flow in the linked scenario.',
+        continuity,
+      },
+    });
+
+    expect(args.simulationControls[0].default).toBe(60);
+    expect(args.continuity.baseline[0].value).toBe(60);
+  });
+
+  it.each([60, '60', ' 60 ', '60.0'])(
+    'accepts strict decimal-equivalent continuity baseline %j for numeric control 60',
+    async (baselineValue) => {
+      const probe = await runSimulationControlPreflight(baselineValue);
+      expect(probe.outcome).toBe('threw');
+      expect(probe.error).toMatchObject({ message: 'MOCK_DOWNSTREAM_AI_SEAM_REACHED' });
+      expect(probe.aiCall).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['60 L/min', 'sixty', '', '   ', 'Infinity', 'NaN', '0x3c'])(
+    'rejects non-decimal continuity baseline %j for numeric control 60',
+    async (baselineValue) => {
+      const probe = await runSimulationControlPreflight(baselineValue);
+      expect(probe.outcome).toBe('returned');
+      expect(probe.response).toMatchObject({ isError: true });
+      expect(probe.aiCall).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects genuinely different numeric control and continuity defaults', async () => {
+    const probe = await runSimulationControlPreflight(60, 55);
+    expect(probe.outcome).toBe('returned');
+    expect(probe.response).toMatchObject({
+      isError: true,
+      details: { error: 'simulation-control-continuity-conflict' },
+    });
+    expect(probe.aiCall).not.toHaveBeenCalled();
+  });
+
+  it('rejects typed simulation controls on non-simulation generation before model invocation', async () => {
+    const current = state(document([]));
+    const aiCall = vi.fn();
+    const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+    const control = {
+      name: 'flow',
+      label: 'Flow',
+      min: 30,
+      max: 100,
+      default: 60,
+    };
+
+    for (const params of [
+      {
+        stageId: 'stage-test',
+        order: 1,
+        title: 'Slide',
+        type: 'slide',
+        brief: 'Not interactive.',
+        simulationControls: [control],
+      },
+      {
+        stageId: 'stage-test',
+        order: 1,
+        title: 'Diagram',
+        type: 'interactive',
+        widgetType: 'diagram',
+        brief: 'Not a simulation.',
+        simulationControls: [control],
+      },
+    ]) {
+      const response = await generate.execute('wrong-widget-kind', params as never);
+      expect(response).toMatchObject({
+        isError: true,
+        details: { error: 'simulation-controls-require-simulation' },
+      });
+    }
+    expect(aiCall).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(0);
+  });
+
+  it('rejects invalid typed simulation control bounds before model invocation', async () => {
+    const current = state(document([]));
+    const aiCall = vi.fn();
+    const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+
+    const response = await generate.execute('invalid-control', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Simulation',
+      type: 'interactive',
+      widgetType: 'simulation',
+      brief: 'Invalid control.',
+      simulationControls: [
+        { name: 'flow', label: 'Flow', min: 100, max: 30, default: 60, step: 0 },
+      ],
+    } as never);
+
+    expect(response).toMatchObject({
+      isError: true,
+      details: {
+        error: 'invalid-simulation-controls',
+        violations: expect.arrayContaining([
+          expect.stringContaining('min must be less than max'),
+          expect.stringContaining('step must be greater than zero'),
+        ]),
+      },
+    });
+    expect(aiCall).not.toHaveBeenCalled();
   });
 
   it('leaves ordinary generate_scene prompts and persistence unchanged', async () => {
@@ -542,12 +805,25 @@ describe('generation and deck tools', () => {
       type: 'interactive',
       widgetType: 'simulation',
       widgetOutline: { concept: 'Flow', keyVariables: ['flow'] },
+      simulationControls: [
+        {
+          name: 'flow',
+          label: 'Set inspiratory flow',
+          min: 40,
+          max: 90,
+          default: 60,
+          unit: 'L/min',
+          step: 5,
+        },
+      ],
       brief: 'Vary flow in the linked scenario.',
       continuity,
     } as never);
     expect(response).not.toMatchObject({ isError: true });
     expect(prompts[0]).toContain('AUTHORITATIVE SCENARIO CONTINUITY CONTRACT');
     expect(prompts[0]).toContain('pressure scooping is present at baseline');
+    expect(prompts[0]).toContain('Authoritative Control Specification');
+    expect(prompts[0]).toContain('"default": 60');
     expect(evaluator).toHaveBeenCalledWith(
       expect.objectContaining({
         contract: continuity,
@@ -558,6 +834,68 @@ describe('generation and deck tools', () => {
     );
     expect(generateActions).toHaveBeenCalledOnce();
     expect(current.get()?.scenes).toHaveLength(2);
+  });
+
+  it('rejects generated widget config that disagrees with a typed control default', async () => {
+    const current = state(document([slide('source', 1)]));
+    const evaluator = vi.fn();
+    const generateActions = vi.fn(async () => []);
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async () =>
+            continuityHtml({
+              variables: [
+                {
+                  name: 'flow',
+                  label: 'Set inspiratory flow',
+                  min: 40,
+                  max: 90,
+                  default: 50,
+                  unit: 'L/min',
+                },
+              ],
+            }),
+          ),
+          generateActions,
+          evaluateContinuity: evaluator,
+        }),
+      ),
+      'generate_scene',
+    );
+
+    const response = await generate.execute('wrong-generated-default', {
+      stageId: 'stage-test',
+      order: 2,
+      title: 'Linked simulation',
+      type: 'interactive',
+      widgetType: 'simulation',
+      widgetOutline: { concept: 'Flow' },
+      simulationControls: [
+        {
+          name: 'flow',
+          label: 'Set inspiratory flow',
+          min: 40,
+          max: 90,
+          default: 60,
+          unit: 'L/min',
+          step: 5,
+        },
+      ],
+      brief: 'Vary flow in the linked scenario.',
+      continuity,
+    } as never);
+
+    expect(response).toMatchObject({
+      isError: true,
+      details: {
+        error: 'continuity-deterministic-revise',
+        violations: [expect.stringContaining('control flow default')],
+      },
+    });
+    expect(evaluator).not.toHaveBeenCalled();
+    expect(generateActions).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toHaveLength(1);
   });
 
   it('rejects continuity when the declared source page is not persisted', async () => {

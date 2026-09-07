@@ -20,6 +20,17 @@ export interface PdfImage {
 
 export type ImageMapping = Record<string, string>;
 
+/** Authoritative control definition for a generated simulation widget. */
+export interface SimulationVariable {
+  name: string;
+  label: string;
+  min: number;
+  max: number;
+  default: number;
+  unit?: string;
+  step?: number;
+}
+
 /** Free-form requirements accepted by outline generation. */
 export interface UserRequirements {
   requirement: string;
@@ -33,6 +44,7 @@ export interface UserRequirements {
 export interface WidgetOutline {
   concept?: string;
   keyVariables?: string[];
+  simulationControls?: SimulationVariable[];
   diagramType?: 'flowchart' | 'mindmap' | 'hierarchy' | 'system';
   language?: 'python' | 'javascript' | 'typescript' | 'java' | 'cpp';
   gameType?: 'quiz' | 'puzzle' | 'strategy' | 'card' | 'action';
