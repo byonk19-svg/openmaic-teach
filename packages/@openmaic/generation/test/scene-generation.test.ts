@@ -70,6 +70,36 @@ describe('scene generation primitives', () => {
     });
   });
 
+  it('passes an authoritative reasoning gate into a single-short-answer quiz prompt', async () => {
+    let userPrompt = '';
+    const outline = quizOutline();
+    outline.quizConfig = { questionCount: 1, difficulty: 'hard', questionTypes: ['text'] };
+    outline.reasoningGate = {
+      rubric: 'Require pattern, mechanism, and one specific intervention with a target.',
+      passThreshold: 0.8,
+    };
+
+    await generateSceneContent(outline, async (_system, user) => {
+      userPrompt = user;
+      return JSON.stringify([
+        {
+          id: 'q1',
+          type: 'short_answer',
+          question: 'Interpret the waveform.',
+          analysis: 'Reference analysis.',
+          points: 20,
+        },
+      ]);
+    });
+
+    expect(userPrompt).toContain('Question Count: 1');
+    expect(userPrompt).toContain('Question Types: text');
+    expect(userPrompt).toContain('Authoritative Reasoning Gate');
+    expect(userPrompt).toContain(JSON.stringify(outline.reasoningGate, null, 2));
+    expect(userPrompt).toContain('exactly one `short_answer` question');
+    expect(userPrompt).toContain('Do not add other questions, options, an answer key, or a `reasoningGate` field');
+  });
+
   it('runs one widget kind end-to-end through config extraction and actions', async () => {
     let calls = 0;
     const aiCall: AICallFn = async () => {

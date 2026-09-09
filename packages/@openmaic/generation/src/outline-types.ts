@@ -1,4 +1,4 @@
-import type { WidgetType } from '@openmaic/dsl';
+import type { ReasoningGateConfig, WidgetType } from '@openmaic/dsl';
 
 export type { WidgetType } from '@openmaic/dsl';
 
@@ -96,6 +96,8 @@ export interface SceneOutline {
     difficulty: 'easy' | 'medium' | 'hard';
     questionTypes: ('single' | 'multiple' | 'text')[];
   };
+  /** Authoritative host-owned gate for a single-short-answer quiz. */
+  reasoningGate?: ReasoningGateConfig;
   /**
    * @deprecated Use widgetType + widgetOutline instead
    * Legacy interactive config - kept for backward compatibility only

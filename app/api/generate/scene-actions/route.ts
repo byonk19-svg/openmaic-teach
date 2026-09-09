@@ -29,6 +29,7 @@ import { normalizeLegacyPBLContent } from '@/lib/pbl/legacy/read';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
+import { finalizeReasoningGatedQuiz } from '@/lib/server/reasoning-gated-quiz';
 
 const log = createLogger('Scene Actions API');
 
@@ -149,13 +150,32 @@ export async function POST(req: NextRequest) {
     // ── Generate actions ──
     log.info(`Generating actions: "${outline.title}" (${outline.type}) [model=${modelString}]`);
 
-    const generationContent = (
+    let generationContent = (
       'type' in content && content.type === 'pbl' ? normalizeLegacyPBLContent(content) : content
     ) as
       | GeneratedSlideContent
       | GeneratedQuizContent
       | GeneratedInteractiveContent
       | GeneratedPBLContent;
+
+    if (outline.type === 'quiz' && outline.reasoningGate !== undefined) {
+      if (!('questions' in generationContent)) {
+        return apiError(
+          'GENERATION_FAILED',
+          422,
+          'Reasoning gate check requires regeneration; nothing was assembled.',
+        );
+      }
+      const finalized = finalizeReasoningGatedQuiz(outline, generationContent);
+      if (!finalized.ok) {
+        return apiError(
+          'GENERATION_FAILED',
+          422,
+          `Reasoning gate check requires regeneration; nothing was assembled. ${finalized.violations.join('; ')}`,
+        );
+      }
+      generationContent = finalized.content;
+    }
 
     const actions = await generateSceneActions(outline, generationContent, aiCall, {
       ctx,

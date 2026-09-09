@@ -871,6 +871,8 @@ async function generateQuizContent(
     questionCount: quizConfig.questionCount,
     difficulty: quizConfig.difficulty,
     questionTypes: quizConfig.questionTypes.join(', '),
+    reasoningGate: outline.reasoningGate,
+    hasReasoningGate: Boolean(outline.reasoningGate),
     languageDirective: languageDirective || '',
   });
 

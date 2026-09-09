@@ -128,6 +128,9 @@ describe('built-in RT clinical reasoning skill', () => {
     ]);
     expect(content.questions[0].reasoningGate.rubric.trim().length).toBeGreaterThan(0);
     expect(content.questions[0].options).toBeUndefined();
+    expect(skill!.content).toContain('`quizConfig`');
+    expect(skill!.content).toContain('`reasoningGate`');
+    expect(skill!.content).toContain('reasoning-gate-revise');
   });
 
   it('provides a machine-readable continuity contract for linked simulations only', async () => {

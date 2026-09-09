@@ -32,7 +32,21 @@ const resultSchema = z.strictObject({
 /** Accepts a decoded JSON object. JSON text must be decoded strictly by the caller. */
 export function parseReasoningGateResult(input: unknown, threshold: number): ReasoningGateResult {
   z.number().min(0).max(1).parse(threshold);
-  const result = resultSchema.parse(input);
+  // Some OpenAI-compatible providers serialize an omitted optional field as
+  // `null`. For a pass, that has the same safe meaning as omitting followUp;
+  // retain strict validation for every other shape, especially revisions.
+  const normalized =
+    typeof input === 'object' &&
+    input !== null &&
+    !Array.isArray(input) &&
+    (input as { decision?: unknown; followUp?: unknown }).decision === 'pass' &&
+    (input as { followUp?: unknown }).followUp === null
+      ? (() => {
+          const { followUp: _followUp, ...rest } = input as Record<string, unknown>;
+          return rest;
+        })()
+      : input;
+  const result = resultSchema.parse(normalized);
   if (result.decision === 'pass') {
     if (result.score < threshold || result.followUp !== undefined) {
       throw new Error('A pass requires the threshold score and no follow-up');

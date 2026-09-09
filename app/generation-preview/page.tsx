@@ -1048,7 +1048,28 @@ function GenerationPreviewContent() {
       );
 
       sessionStorage.removeItem('generationSession');
-      await store.saveToStorage();
+      const persisted = await store.saveToStorage();
+      if (!persisted) throw new Error('Generated scene could not be persisted.');
+      const requestedGate = (contentData.effectiveOutline || firstOutline).reasoningGate;
+      if (requestedGate) {
+        await store.loadFromStorage(stage.id);
+        const reloaded = useStageStore.getState().getSceneById(firstScene.id);
+        const reloadedQuiz =
+          reloaded?.type === 'quiz' && reloaded.content.type === 'quiz'
+            ? reloaded.content
+            : undefined;
+        const question = reloadedQuiz?.questions[0];
+        if (
+          !reloadedQuiz ||
+          !question ||
+          reloadedQuiz.questions.length !== 1 ||
+          question.type !== 'short_answer' ||
+          question.reasoningGate?.rubric !== requestedGate.rubric ||
+          question.reasoningGate?.passThreshold !== requestedGate.passThreshold
+        ) {
+          throw new Error('Generated reasoning gate did not survive persistence reload.');
+        }
+      }
       router.push(`/classroom/${stage.id}`);
     } catch (err) {
       setIsOutlineStreaming(false);

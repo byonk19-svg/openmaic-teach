@@ -31,6 +31,8 @@ import { toGenerationContent } from './generation-content';
 import { checkScenesAgainstSkill } from './skills';
 import { isMediaPlaceholder } from '@/lib/store/media-generation';
 import { createLogger } from '@/lib/logger';
+import { validateReasoningGate, type ReasoningGateConfig } from '@/lib/quiz/reasoning-gate';
+import { finalizeReasoningGatedQuiz } from '@/lib/server/reasoning-gated-quiz';
 import {
   buildContinuityPromptBlock,
   evaluateSceneContinuity,
@@ -54,6 +56,26 @@ const SimulationControlParams = Type.Object(
     default: Type.Number(),
     unit: Type.Optional(Type.String({ minLength: 1 })),
     step: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+const QuizConfigParams = Type.Object(
+  {
+    questionCount: Type.Integer({ minimum: 1, maximum: 20 }),
+    difficulty: Type.Union([Type.Literal('easy'), Type.Literal('medium'), Type.Literal('hard')]),
+    questionTypes: Type.Array(
+      Type.Union([Type.Literal('single'), Type.Literal('multiple'), Type.Literal('text')]),
+      { minItems: 1, maxItems: 3, uniqueItems: true },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const ReasoningGateParams = Type.Object(
+  {
+    rubric: Type.String({ minLength: 1 }),
+    passThreshold: Type.Number({ minimum: 0, maximum: 1 }),
   },
   { additionalProperties: false },
 );
@@ -95,6 +117,17 @@ const SceneParams = Type.Object({
       maxItems: 16,
       description:
         'Interactive simulation pages only: authoritative adjustable controls. The simulation prompt and generated widget-config must preserve these values exactly.',
+    }),
+  ),
+  quizConfig: Type.Optional(
+    Type.Intersect([QuizConfigParams], {
+      description: 'Quiz pages only: authoritative question count, difficulty, and question types.',
+    }),
+  ),
+  reasoningGate: Type.Optional(
+    Type.Intersect([ReasoningGateParams], {
+      description:
+        'Quiz pages only: authoritative question-level gate. Requires exactly one text question; the host attaches this exact object after validating generated instructional content.',
     }),
   ),
   brief: Type.String({ minLength: 1 }),
@@ -335,7 +368,7 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
     name: 'generate_scene',
     label: 'Generate page',
     description:
-      'Generate and durably persist one page from an explicit title, type, and brief. Reusing an order replaces that page. Interactive pages accept widgetType (simulation/diagram/code/game/visualization3d) plus a matching widgetOutline object; simulations may also provide authoritative simulationControls. Widget fields are rejected for other page types. A linked simulation may include a generic continuity contract; it must pass deterministic and semantic consistency checks before persistence.',
+      'Generate and durably persist one page from an explicit title, type, and brief. Reusing an order replaces that page. Quiz pages may provide authoritative quizConfig and a single-short-answer reasoningGate. Interactive pages accept widgetType (simulation/diagram/code/game/visualization3d) plus a matching widgetOutline object; simulations may also provide authoritative simulationControls. Type-specific fields are rejected for other page types. A linked simulation may include a generic continuity contract; it must pass deterministic and semantic consistency checks before persistence.',
     parameters: SceneParams,
     async execute(_callId, params, signal) {
       if (!Number.isInteger(params.order) || params.order < 1) {
@@ -393,6 +426,16 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
         );
       }
       if (
+        params.type !== 'quiz' &&
+        (params.quizConfig !== undefined || params.reasoningGate !== undefined)
+      ) {
+        return result(
+          'generate_scene only accepts quizConfig/reasoningGate for quiz pages.',
+          { error: 'quiz-config-requires-quiz', type: params.type },
+          true,
+        );
+      }
+      if (
         params.widgetOutline !== undefined &&
         (typeof params.widgetOutline !== 'object' ||
           params.widgetOutline === null ||
@@ -425,6 +468,36 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
             true,
           );
         }
+      }
+      const requestedQuizConfig = params.quizConfig as SceneOutline['quizConfig'] | undefined;
+      let reasoningGate: ReasoningGateConfig | undefined;
+      if (params.reasoningGate !== undefined) {
+        try {
+          reasoningGate = validateReasoningGate(params.reasoningGate);
+        } catch (error) {
+          return result(
+            `The reasoning gate is invalid; nothing was generated. ${error instanceof Error ? error.message : String(error)}`,
+            { error: 'invalid-reasoning-gate' },
+            true,
+          );
+        }
+      }
+      const effectiveQuizConfig =
+        requestedQuizConfig ??
+        (reasoningGate
+          ? { questionCount: 1, difficulty: 'hard' as const, questionTypes: ['text' as const] }
+          : undefined);
+      if (
+        reasoningGate &&
+        (effectiveQuizConfig?.questionCount !== 1 ||
+          effectiveQuizConfig.questionTypes.length !== 1 ||
+          effectiveQuizConfig.questionTypes[0] !== 'text')
+      ) {
+        return result(
+          'reasoningGate requires quizConfig with exactly one text question; nothing was generated.',
+          { error: 'reasoning-gate-quiz-config-conflict' },
+          true,
+        );
       }
       let continuity: SceneContinuityContract | undefined;
       if (params.continuity !== undefined) {
@@ -518,6 +591,12 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
                 projectDescription: params.brief.trim(),
                 targetSkills: params.materialFacts ?? [],
               },
+            }
+          : {}),
+        ...(params.type === 'quiz' && effectiveQuizConfig
+          ? {
+              quizConfig: effectiveQuizConfig,
+              ...(reasoningGate ? { reasoningGate } : {}),
             }
           : {}),
       };
@@ -633,6 +712,20 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
           },
           true,
         );
+      }
+      if (reasoningGate) {
+        const finalized =
+          'questions' in content
+            ? finalizeReasoningGatedQuiz(outline, content)
+            : { ok: false as const, violations: ['reasoningGate generation did not produce quiz questions'] };
+        if (!finalized.ok) {
+          return result(
+            `Reasoning gate check requires regeneration; nothing was written. ${finalized.violations.join('; ')}`,
+            { error: 'reasoning-gate-revise', violations: finalized.violations },
+            true,
+          );
+        }
+        content = finalized.content;
       }
       if (continuity) {
         if (!('html' in content)) {

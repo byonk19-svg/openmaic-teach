@@ -7,6 +7,7 @@
 
 import type { ActionType } from './action';
 import type { MediaGenerationRequest } from '@/lib/media/types';
+import type { ReasoningGateConfig } from '@openmaic/dsl';
 
 // ==================== PDF Image Types ====================
 
@@ -168,6 +169,7 @@ export interface SceneOutline {
     difficulty: 'easy' | 'medium' | 'hard';
     questionTypes: ('single' | 'multiple' | 'text')[];
   };
+  reasoningGate?: ReasoningGateConfig;
   /**
    * @deprecated Use widgetType + widgetOutline instead
    * Legacy interactive config - kept for backward compatibility only

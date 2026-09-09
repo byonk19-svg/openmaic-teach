@@ -184,4 +184,12 @@ describe('reasoning gate contract', () => {
       ),
     ).toEqual({ decision: 'pass', score: 0.8, feedback: 'Both causes explained.' });
   });
+  it('treats a null pass follow-up as an omitted follow-up', () => {
+    expect(
+      parseReasoningGateResult(
+        { decision: 'pass', score: 0.9, feedback: 'Both causes explained.', followUp: null },
+        0.8,
+      ),
+    ).toEqual({ decision: 'pass', score: 0.9, feedback: 'Both causes explained.' });
+  });
 });

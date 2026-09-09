@@ -25,6 +25,11 @@ const continuity: SceneContinuityContract = {
   expectedBaselineFindings: ['pressure scooping is present at baseline'],
 };
 
+const reasoningGate = {
+  rubric: 'Require pattern, mechanism, and one specific intervention with an observable target.',
+  passThreshold: 0.8,
+};
+
 function continuityHtml(overrides: Record<string, unknown> = {}) {
   const widgetConfig = {
     type: 'simulation',
@@ -529,6 +534,255 @@ describe('generation and deck tools', () => {
     expect(
       (generate.parameters as unknown as { properties?: Record<string, unknown> }).properties,
     ).toHaveProperty('simulationControls');
+    expect(
+      (generate.parameters as unknown as { properties?: Record<string, unknown> }).properties,
+    ).toHaveProperty('quizConfig');
+    expect(
+      (generate.parameters as unknown as { properties?: Record<string, unknown> }).properties,
+    ).toHaveProperty('reasoningGate');
+  });
+
+  it('attaches a requested reasoning gate to a generated short answer that omits host metadata', async () => {
+    const current = state(document([]));
+    const prompts: string[] = [];
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async (_system: string, user: string) => {
+            prompts.push(user);
+            return JSON.stringify([
+              {
+                id: 'q1',
+                type: 'short_answer',
+                question: 'Interpret the waveform.',
+                analysis: 'Reference analysis.',
+                points: 20,
+              },
+            ]);
+          }),
+          generateActions: vi.fn(async () => []),
+        }),
+      ),
+      'generate_scene',
+    );
+
+    const response = await generate.execute('gated-quiz', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Interpret the observations',
+      type: 'quiz',
+      brief: 'One clinical reasoning checkpoint.',
+      quizConfig: { questionCount: 1, difficulty: 'hard', questionTypes: ['text'] },
+      reasoningGate,
+    } as never);
+
+    expect(response).not.toMatchObject({ isError: true });
+    expect(prompts[0]).toContain('Question Count: 1');
+    expect(prompts[0]).toContain('Authoritative Reasoning Gate');
+    expect(current.get()?.scenes[0]?.content).toMatchObject({
+      type: 'quiz',
+      questions: [{ type: 'short_answer', reasoningGate }],
+    });
+    const reloaded = await current.store.loadDocument('stage-test');
+    expect(reloaded?.scenes[0]?.content).toMatchObject({
+      type: 'quiz',
+      questions: [{ reasoningGate }],
+    });
+  });
+
+  it('persists the canonical requested gate when the model emits an exact matching gate', async () => {
+    const current = state(document([]));
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async () =>
+            JSON.stringify([
+              {
+                id: 'q1',
+                type: 'short_answer',
+                question: 'Interpret the waveform.',
+                analysis: 'Reference analysis.',
+                reasoningGate: { ...reasoningGate },
+              },
+            ]),
+          ),
+          generateActions: vi.fn(async () => []),
+        }),
+      ),
+      'generate_scene',
+    );
+
+    const response = await generate.execute('matching-gated-quiz', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Interpret the observations',
+      type: 'quiz',
+      brief: 'One clinical reasoning checkpoint.',
+      quizConfig: { questionCount: 1, difficulty: 'hard', questionTypes: ['text'] },
+      reasoningGate,
+    } as never);
+
+    expect(response).not.toMatchObject({ isError: true });
+    const reloaded = await current.store.loadDocument('stage-test');
+    const question = (reloaded?.scenes[0]?.content as { questions: Array<Record<string, unknown>> })
+      .questions[0];
+    expect(question.reasoningGate).toEqual(reasoningGate);
+    expect(question.reasoningGate).not.toBe(reasoningGate);
+  });
+
+  it('keeps an ungated quiz model-authored and does not add host gate metadata', async () => {
+    const current = state(document([]));
+    const generate = find(
+      buildGenerationTools(
+        deps(current.store, {
+          aiCall: vi.fn(async () =>
+            JSON.stringify([
+              {
+                id: 'legacy-q1',
+                type: 'single',
+                question: 'Choose the best answer.',
+                options: ['A', 'B'],
+                correctAnswer: 'A',
+              },
+            ]),
+          ),
+          generateActions: vi.fn(async () => []),
+        }),
+      ),
+      'generate_scene',
+    );
+
+    const response = await generate.execute('legacy-quiz', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Legacy practice',
+      type: 'quiz',
+      brief: 'An ordinary quiz without a reasoning gate.',
+    } as never);
+
+    expect(response).not.toMatchObject({ isError: true });
+    const reloaded = await current.store.loadDocument('stage-test');
+    const question = (reloaded?.scenes[0]?.content as { questions: Array<Record<string, unknown>> })
+      .questions[0];
+    expect(question.type).toBe('single');
+    expect(question.reasoningGate).toBeUndefined();
+  });
+
+  it.each([
+    [
+      'three generated questions',
+      [
+        { id: 'q1', type: 'single', question: 'First?' },
+        { id: 'q2', type: 'single', question: 'Second?' },
+        { id: 'q3', type: 'short_answer', question: 'Third?', reasoningGate },
+      ],
+      'exactly one question',
+    ],
+    [
+      'mismatched generated threshold',
+      [
+        {
+          id: 'q1',
+          type: 'short_answer',
+          question: 'Interpret?',
+          analysis: 'Reference analysis.',
+          reasoningGate: { ...reasoningGate, passThreshold: 0.7 },
+        },
+      ],
+      'passThreshold',
+    ],
+    [
+      'mismatched generated rubric',
+      [
+        {
+          id: 'q1',
+          type: 'short_answer',
+          question: 'Interpret?',
+          analysis: 'Reference analysis.',
+          reasoningGate: { ...reasoningGate, rubric: 'Different rubric.' },
+        },
+      ],
+      'rubric does not match',
+    ],
+    [
+      'extra generated gate field',
+      [
+        {
+          id: 'q1',
+          type: 'short_answer',
+          question: 'Interpret?',
+          analysis: 'Reference analysis.',
+          reasoningGate: { ...reasoningGate, gatedAnalysis: 'extra' },
+        },
+      ],
+      'reasoningGate is invalid',
+    ],
+    [
+      'wrong generated question type',
+      [{ id: 'q1', type: 'single', question: 'Interpret?', analysis: 'Reference analysis.' }],
+      'short_answer',
+    ],
+    [
+      'blank generated analysis',
+      [{ id: 'q1', type: 'short_answer', question: 'Interpret?', analysis: '   ' }],
+      'non-empty analysis',
+    ],
+  ])(
+    'rejects gated quiz output with %s before actions or persistence',
+    async (_label, questions, expected) => {
+      const current = state(document([]));
+      const generateActions = vi.fn(async () => []);
+      const generate = find(
+        buildGenerationTools(
+          deps(current.store, {
+            aiCall: vi.fn(async () => JSON.stringify(questions)),
+            generateActions,
+          }),
+        ),
+        'generate_scene',
+      );
+
+      const response = await generate.execute('bad-gated-quiz', {
+        stageId: 'stage-test',
+        order: 1,
+        title: 'Interpret the observations',
+        type: 'quiz',
+        brief: 'One clinical reasoning checkpoint.',
+        quizConfig: { questionCount: 1, difficulty: 'hard', questionTypes: ['text'] },
+        reasoningGate,
+      } as never);
+
+      expect(response).toMatchObject({
+        isError: true,
+        details: { error: 'reasoning-gate-revise' },
+      });
+      expect((response.details as { violations: string[] }).violations.join(' ')).toContain(
+        expected,
+      );
+      expect(generateActions).not.toHaveBeenCalled();
+      expect(current.get()?.scenes).toHaveLength(0);
+    },
+  );
+
+  it('rejects an incompatible reasoning-gate quiz configuration before model invocation', async () => {
+    const current = state(document([]));
+    const aiCall = vi.fn();
+    const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+    const response = await generate.execute('bad-gate-config', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Interpret',
+      type: 'quiz',
+      brief: 'Checkpoint.',
+      quizConfig: { questionCount: 3, difficulty: 'medium', questionTypes: ['single', 'text'] },
+      reasoningGate,
+    } as never);
+
+    expect(response).toMatchObject({
+      isError: true,
+      details: { error: 'reasoning-gate-quiz-config-conflict' },
+    });
+    expect(aiCall).not.toHaveBeenCalled();
   });
 
   it('passes typed simulation controls from generate_scene into the simulation prompt', async () => {

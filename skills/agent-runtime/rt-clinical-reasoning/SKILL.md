@@ -39,18 +39,22 @@ widget, or outline constraint file. Do not substitute an iframe text box,
 multiple-choice question, acknowledgement button, or self-reported confidence.
 The numeric threshold is internal gate evaluation, not a learner score.
 
+For every new checkpoint, pass `generate_scene` both typed fields: `quizConfig`
+with `{questionCount: 1, difficulty: "hard", questionTypes: ["text"]}`, and the
+case-specific top-level `reasoningGate`. The generator carries the gate
+into the question prompt as an authoritative authoring constraint, then the host
+attaches the exact typed object after generated content passes structural checks.
+It rejects the complete generated quiz before persistence unless the final content
+contains exactly one `short_answer` question with the exact rubric and threshold.
+If it returns `reasoning-gate-revise`, regenerate the
+complete checkpoint using the listed violations; do not patch a newly generated
+checkpoint into apparent compliance.
+
 After `generate_scene` creates each checkpoint, inspect that scene with
-`read_stage` using `detail:"source"`. Generation may omit `reasoningGate` because
-its output schema does not retain unknown fields; the generation brief is not
-proof that the gate was persisted. Confirm exactly one `short_answer` question.
-If the gate is missing, use `patch_stage` with the explicit `stageId`,
-`target:"/scenes/<sceneId>"`, a clear intent, and a `set` operation at
-`/content/questions/0/reasoningGate` whose value is the case-specific
-`{rubric: string, passThreshold: 0.8}` object. Repair an incorrect question type or
-count before attaching the gate. Read the source again to verify the saved
-question, rubric, threshold, and gated `analysis`; report any rejected patch as
-unfinished integration. This repair enables the question's explanation gate,
-not cross-scene navigation control.
+`read_stage` using `detail:"source"`. Confirm exactly one `short_answer` question,
+the exact two-field gate, and a non-empty gated `analysis`. Treat older courses
+without this typed generation contract as legacy content requiring separate review;
+do not use post-generation patching as proof that new checkpoint generation works.
 
 The following is a native quiz-content example for a measurement-validity case;
 adapt its observations and rubric together for each case:

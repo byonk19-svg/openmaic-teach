@@ -67,6 +67,22 @@ const pblOutline = {
   },
 } as SceneOutline;
 
+const reasoningGate = {
+  rubric: 'Require finding, mechanism, and one specific action with an observable target.',
+  passThreshold: 0.8,
+};
+
+const gatedQuizOutline = {
+  id: 'gated-quiz-1',
+  type: 'quiz',
+  title: 'Interpret the observations',
+  description: 'One gated clinical reasoning checkpoint.',
+  keyPoints: [],
+  order: 1,
+  quizConfig: { questionCount: 1, difficulty: 'hard', questionTypes: ['text'] },
+  reasoningGate,
+} as SceneOutline;
+
 describe('scene API retry boundary', () => {
   beforeEach(() => {
     for (const mock of Object.values(mocks)) {
@@ -156,6 +172,7 @@ describe('scene API retry boundary', () => {
     );
     const body = await response.json();
 
+    expect(body).toMatchObject({ success: true });
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.scene.actions).toHaveLength(1);
@@ -166,6 +183,106 @@ describe('scene API retry boundary', () => {
     expect(mocks.buildCompleteScene.mock.calls[0][1]).toBe(
       mocks.generateSceneActions.mock.calls[0][1],
     );
+  });
+
+  it('attaches the host-owned gate before generating actions in the split quiz route', async () => {
+    vi.resetModules();
+    mocks.generateSceneActions.mockResolvedValue([]);
+    mocks.buildCompleteScene.mockImplementation((_outline, content, actions, stageId) => ({
+      id: 'scene-gated-1',
+      stageId,
+      type: 'quiz',
+      title: gatedQuizOutline.title,
+      order: 1,
+      content: { type: 'quiz', questions: content.questions },
+      actions,
+    }));
+
+    const { POST } = await import('@/app/api/generate/scene-actions/route');
+    const response = await POST(
+      mockRequest({
+        outline: gatedQuizOutline,
+        allOutlines: [gatedQuizOutline],
+        content: {
+          questions: [
+            {
+              id: 'q1',
+              type: 'short_answer',
+              question: 'Interpret the waveform.',
+              analysis: 'Reference analysis.',
+            },
+          ],
+        },
+      }),
+    );
+    const body = await response.json();
+
+    if (!body.success) throw new Error(JSON.stringify(body));
+    expect(response.status).toBe(200);
+    expect(mocks.generateSceneActions).toHaveBeenCalledTimes(1);
+    expect(mocks.generateSceneActions.mock.calls[0][1].questions[0].reasoningGate).toEqual(
+      reasoningGate,
+    );
+    expect(body.scene.content.questions[0].reasoningGate).toEqual(reasoningGate);
+  });
+
+  it.each([
+    [
+      'a mismatched threshold',
+      [{ id: 'q1', type: 'short_answer', question: 'Interpret?', analysis: 'Analysis.', reasoningGate: { ...reasoningGate, passThreshold: 0.7 } }],
+    ],
+    [
+      'a mismatched rubric',
+      [{ id: 'q1', type: 'short_answer', question: 'Interpret?', analysis: 'Analysis.', reasoningGate: { ...reasoningGate, rubric: 'Different.' } }],
+    ],
+    [
+      'an unexpected gate field',
+      [{ id: 'q1', type: 'short_answer', question: 'Interpret?', analysis: 'Analysis.', reasoningGate: { ...reasoningGate, extra: true } }],
+    ],
+    ['multiple questions', [{ id: 'q1', type: 'short_answer', analysis: 'Analysis.' }, { id: 'q2', type: 'short_answer', analysis: 'Analysis.' }]],
+    ['a wrong question type', [{ id: 'q1', type: 'single', question: 'Choose', analysis: 'Analysis.' }]],
+    ['a blank analysis', [{ id: 'q1', type: 'short_answer', question: 'Interpret?', analysis: ' ' }]],
+  ])('rejects gated split-route content with %s before actions', async (_label, questions) => {
+    vi.resetModules();
+    const { POST } = await import('@/app/api/generate/scene-actions/route');
+    const response = await POST(
+      mockRequest({
+        outline: gatedQuizOutline,
+        allOutlines: [gatedQuizOutline],
+        content: { questions },
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(mocks.generateSceneActions).not.toHaveBeenCalled();
+    expect(mocks.buildCompleteScene).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ungated split-route quiz unchanged', async () => {
+    vi.resetModules();
+    mocks.generateSceneActions.mockResolvedValue([]);
+    mocks.buildCompleteScene.mockImplementation((_outline, content, actions, stageId) => ({
+      id: 'scene-legacy-1',
+      stageId,
+      type: 'quiz',
+      title: 'Legacy practice',
+      order: 1,
+      content: { type: 'quiz', questions: content.questions },
+      actions,
+    }));
+    const legacyQuiz = { ...gatedQuizOutline, reasoningGate: undefined, title: 'Legacy practice' };
+    const { POST } = await import('@/app/api/generate/scene-actions/route');
+    const response = await POST(
+      mockRequest({
+        outline: legacyQuiz,
+        allOutlines: [legacyQuiz],
+        content: { questions: [{ id: 'q1', type: 'single', question: 'Choose', options: ['A'] }] },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.scene.content.questions[0].reasoningGate).toBeUndefined();
   });
 
   it('builds damaged hybrid PBL content from the upgraded legacy project', async () => {
