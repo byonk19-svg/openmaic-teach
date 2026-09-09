@@ -1,0 +1,7 @@
+{
+  "allowedTypes": ["slide", "quiz", "interactive"],
+  "typeMix": [{ "type": "quiz", "min": 1 }],
+  "allowedWidgetTypes": ["simulation"],
+  "requiredWidgetOutlineFields": ["concept", "keyVariables"],
+  "noConsecutiveSameWidgetType": true
+}

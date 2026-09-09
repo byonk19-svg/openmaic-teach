@@ -1,0 +1,12 @@
+# Local Codex state and machine-specific diagnostic output
+.omx/
+docker-elevated-readonly-output.txt
+
+# Never publish local environment or credential files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519

@@ -1,0 +1,8 @@
+{
+  "url": "http://127.0.0.1:3001/classroom/7M9oz0btFL",
+  "diagnostics": [
+    "[http:404] http://127.0.0.1:3001/api/persistence/runtime/sessions/whiteboard%3A7M9oz0btFL%3Aanon%253Ac02c3c26-1c9e-45cf-a7c7-e40e433a29d7",
+    "[console:error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "[learner] restoredDraft=true"
+  ]
+}
