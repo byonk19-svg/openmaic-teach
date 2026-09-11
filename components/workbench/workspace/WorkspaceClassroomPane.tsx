@@ -28,6 +28,7 @@ import { WorkbenchPanelProvider } from '@/lib/workbench/panel-context';
 import { useWorkbenchProEditing } from '@/lib/workbench/use-workbench-pro-edit';
 import { WorkspaceCourseTabs, type WorkspaceCourseTabItem } from './WorkspaceCourseTabs';
 import { PaneFoldButton } from './PaneFoldButton';
+import { BrowserQaControl } from '../BrowserQaControl';
 
 export const WorkspaceClassroomPane = memo(function WorkspaceClassroomPane({
   browser,
@@ -150,6 +151,7 @@ export const WorkspaceClassroomPane = memo(function WorkspaceClassroomPane({
             <Play className="size-3.5" aria-hidden="true" />
             {t('workspace.startLearning')}
           </button>
+          <BrowserQaControl stageId={courseId} />
         </header>
       )}
 
