@@ -132,6 +132,24 @@ const CreateStageParams = Type.Object({
         'An owner folder id from create_folder or list_folder_stages. Omit to create an ungrouped stage.',
     }),
   ),
+  outlines: Type.Array(
+    Type.Object({
+      title: Type.String({ minLength: 1 }),
+      description: Type.String({ minLength: 1 }),
+      type: Type.Union([
+        Type.Literal('slide'),
+        Type.Literal('quiz'),
+        Type.Literal('interactive'),
+        Type.Literal('pbl'),
+      ]),
+      keyPoints: Type.Optional(Type.Array(Type.String())),
+    }),
+    {
+      minItems: 1,
+      description:
+        'The complete ordered instructional plan. Persisted before any generate_scene call; array position is the stable page order.',
+    },
+  ),
 });
 
 const CreateFolderParams = Type.Object({
@@ -269,6 +287,14 @@ export function buildCurriculumTools(deps: CurriculumToolDeps): AgentTool<never,
         );
       }
       const now = Date.now();
+      const plannedOutlines = (params.outlines ?? []).map((outline, index) => ({
+        id: `p${index + 1}`,
+        order: index + 1,
+        title: outline.title.trim(),
+        description: outline.description.trim(),
+        type: outline.type,
+        keyPoints: [...(outline.keyPoints ?? [])],
+      }));
       const document: CourseDocument = {
         stage: {
           id: stageId,
@@ -278,17 +304,14 @@ export function buildCurriculumTools(deps: CurriculumToolDeps): AgentTool<never,
           updatedAt: now,
         },
         scenes: [],
-        // The same outline envelope the server-side generate_outline writes,
-        // with producer semantics intact: this course is owned by the agent
-        // runtime job, and the browser must never generate into it. An
-        // agent-minted stage has NO generation-pipeline lifecycle — planning
-        // happens in the conversation and each page lands through the page
-        // tools of the generation slice — so it is born complete
-        // (`generationComplete: true`).
+        // Persist the plan atomically with the stage mint. The runtime schema
+        // requires it; the empty fallback exists only for direct unit calls
+        // that bypass TypeBox validation.
         outline: {
-          outlines: [],
+          outlines: plannedOutlines,
           requirement: title,
-          generationComplete: true,
+          generationComplete: false,
+          generationIntent: plannedOutlines.length ? 'instructional' : 'zero-scene',
           producer: 'server-job',
           ...(deps.sessionId ? { producerRef: deps.sessionId } : {}),
           createdAt: now,
@@ -583,7 +606,7 @@ export const CURRICULUM_ALLOWLIST: ReadonlySet<string> = new Set([
  */
 export const CURRICULUM_TOOLS_PROMPT = [
   'Multi-stage series: create the series folder with `create_folder`, then call',
-  '`create_stage` once per unit/day and pass the folderId in the same call.',
+  '`create_stage` once per unit/day: pass folderId and the COMPLETE ordered outlines array in that same call, before any generate_scene call.',
   '`create_stage` returns a stageId; pass that',
   'stageId explicitly to every later stage tool. There is no active/current stage.',
   'Use different stageIds to work on several stages in parallel.',

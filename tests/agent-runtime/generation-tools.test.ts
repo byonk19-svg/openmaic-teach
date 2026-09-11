@@ -171,6 +171,41 @@ async function runSimulationControlPreflight(baselineValue: string | number, con
 }
 
 describe('generation and deck tools', () => {
+  it('refuses to generate a page that diverges from the persisted instructional outline', async () => {
+    const planned = document([]);
+    planned.outline = {
+      outlines: [
+        {
+          id: 'p1',
+          order: 1,
+          title: 'Persisted title',
+          description: 'Persisted brief',
+          type: 'slide',
+          keyPoints: [],
+        },
+      ],
+      generationIntent: 'instructional',
+      generationComplete: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const current = state(planned);
+    const aiCall = vi.fn();
+    const generate = find(buildGenerationTools(deps(current.store, { aiCall })), 'generate_scene');
+
+    const response = await generate.execute('outline-mismatch', {
+      stageId: 'stage-test',
+      order: 1,
+      title: 'Changed title',
+      type: 'slide',
+      brief: 'Persisted brief',
+    } as never);
+
+    expect(response).toMatchObject({ isError: true, details: { error: 'outline-entry-mismatch' } });
+    expect(aiCall).not.toHaveBeenCalled();
+    expect(current.get()?.scenes).toEqual([]);
+  });
+
   it('reports active-skill diagnostics against the persisted stage after generation', async () => {
     const current = state(document([]));
     const onCheckpoint = vi.fn();

@@ -1,6 +1,8 @@
 import { DocumentVersionError, type DocumentStore } from '@openmaic/storage';
 
 import type { Scene, Stage } from '@/lib/types/stage';
+import type { AppDocumentOutline } from '@/lib/document-store/persistence-types';
+import { isGenerationComplete } from '@/lib/server/stage-generation-state';
 
 /**
  * Incremental scene writes land only in already-current documents (see the
@@ -36,7 +38,6 @@ export async function putSceneBringingCurrent(
 ): Promise<void> {
   try {
     await store.putScene(stageId, scene);
-    return;
   } catch (error) {
     if (!(error instanceof DocumentVersionError) || error.kind !== 'not-current') throw error;
     const doc = await store.loadDocument(stageId);
@@ -45,5 +46,18 @@ export async function putSceneBringingCurrent(
     scenes.push(scene);
     scenes.sort((a, b) => a.order - b.order);
     await store.saveDocument({ ...doc, scenes });
+  }
+  const persisted = await store.loadDocument(stageId);
+  if (!persisted) return;
+  const outline = persisted.outline as AppDocumentOutline | undefined;
+  const complete = isGenerationComplete({
+    scenes: persisted.scenes,
+    outline,
+  });
+  if (outline?.generationComplete !== complete) {
+    await store.saveDocument({
+      ...persisted,
+      outline: { ...outline, generationComplete: complete },
+    });
   }
 }

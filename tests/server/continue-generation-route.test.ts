@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => {
     return run;
   });
   return {
-    docs: new Map<string, any>(),
+    docs: new Map<string, unknown>(),
     saveDocument: vi.fn(),
     running,
     startOrResume,
@@ -43,16 +43,19 @@ vi.mock('@/lib/server/stage-scene-generator', () => ({
   validateStageSceneGenerationContext: mocks.validateGenerationContext,
 }));
 
-import { POST } from '@/app/api/stages/[stageId]/continue-generation/route';
+import { POST } from '@/app/api/stages/[id]/continue-generation/route';
 
 const API_KEY = 'sk-route-test-secret';
 
 function document(stageId: string, generationComplete = false) {
+  const outlines = [{ id: 'outline-1', order: 1 }];
   return {
     stage: { id: stageId, name: 'Course' },
-    scenes: [],
+    scenes: generationComplete
+      ? [{ id: 'scene-1', stageId, outlineId: 'outline-1', order: 1 }]
+      : [],
     outline: {
-      outlines: [{ id: 'outline-1', order: 1 }],
+      outlines,
       generationComplete,
       metadata: { apiKey: API_KEY },
     },
@@ -65,7 +68,7 @@ function request(stageId: string) {
       method: 'POST',
     }),
     {
-      params: Promise.resolve({ stageId }),
+      params: Promise.resolve({ id: stageId }),
     },
   );
 }
@@ -118,6 +121,27 @@ describe('POST /api/stages/[stageId]/continue-generation', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ status: 'already_complete' });
+    expect(mocks.startOrResume).not.toHaveBeenCalled();
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a server-owned stage with no required outline before model validation or runner work', async () => {
+    mocks.docs.set('stage-1', {
+      stage: { id: 'stage-1', name: 'Course' },
+      scenes: [],
+      outline: {
+        outlines: [],
+        producer: 'server-job',
+        requirement: 'Generated course',
+        generationComplete: true,
+      },
+    });
+
+    const response = await request('stage-1');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: 'generation_outline_invalid' });
+    expect(mocks.validateGenerationContext).not.toHaveBeenCalled();
     expect(mocks.startOrResume).not.toHaveBeenCalled();
     expect(mocks.generate).not.toHaveBeenCalled();
   });

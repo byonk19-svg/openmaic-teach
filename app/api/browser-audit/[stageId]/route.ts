@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { courseAuditRuns, summarizeCourseAuditReport } from '@/lib/server/course-audit-runs';
+import { isGenerationComplete } from '@/lib/server/stage-generation-state';
 import { resolveStageAccess } from '@/lib/server/stage-access';
 import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
 import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
@@ -24,10 +25,19 @@ async function withReadableStage(
     const store = await getOwnerScopedDocumentStore(ownerId);
     const document = await store.loadDocument(stageId);
     if (!document) return NextResponse.json({ error: 'not_found' }, { status: 404, headers });
-    const generationDocument = document as { outline?: { generationComplete?: boolean } };
+    const generationDocument = document as {
+      scenes: Array<{ outlineId?: string; order: number }>;
+      outline?: {
+        outlines?: Array<{ id: string; order: number }>;
+        generationComplete?: boolean;
+        producer?: 'client' | 'server-job';
+        requirement?: string;
+        generationIntent?: 'instructional' | 'zero-scene';
+      };
+    };
     return work({
       stageId,
-      generationComplete: generationDocument.outline?.generationComplete === true,
+      generationComplete: isGenerationComplete(generationDocument),
       headers,
     });
   });

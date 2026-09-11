@@ -1,4 +1,5 @@
 import type { Scene } from '@/lib/types/stage';
+import { inspectStageGeneration } from './stage-generation-state';
 
 export type StageDocument = {
   stage: { id: string };
@@ -6,6 +7,9 @@ export type StageDocument = {
   outline?: {
     outlines?: Array<{ id: string; order: number; type?: string }>;
     generationComplete?: boolean;
+    producer?: 'client' | 'server-job';
+    requirement?: string;
+    generationIntent?: 'instructional' | 'zero-scene';
   };
 };
 
@@ -30,6 +34,10 @@ export async function generateAndPersistNextScene(input: {
 }): Promise<NextSceneResult> {
   const document = await input.store.loadDocument(input.stageId);
   if (!document) throw new Error(`Stage ${input.stageId} was not found`);
+  const generation = inspectStageGeneration(document);
+  if (generation.status === 'invalid_outline') {
+    throw new StageGenerationStateError(generation.reason);
+  }
   const outlines = document.outline?.outlines ?? [];
   const next = [...outlines]
     .sort((a, b) => a.order - b.order)
@@ -56,4 +64,11 @@ export async function generateAndPersistNextScene(input: {
     outline: { ...current.outline, generationComplete: false },
   });
   return { status: 'persisted', outlineId: next.id, sceneId: scene.id, order: scene.order };
+}
+
+export class StageGenerationStateError extends Error {
+  constructor(readonly reason: 'missing_required_outline' | 'malformed_required_outline') {
+    super(reason);
+    this.name = 'StageGenerationStateError';
+  }
 }

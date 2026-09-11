@@ -18,6 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { ensureDocumentSchema } from '@openmaic/storage/document/pg';
+import { Value } from 'typebox/value';
 
 import {
   buildCurriculumTools,
@@ -177,6 +178,13 @@ function ownedDoc(stageId: string, name: string): CourseDocument {
 
 const OWNED: StageAccess = { kind: 'owned', stage: { stageId: 'stage-b', name: 'Course B' } };
 
+const sixScenePlan = Array.from({ length: 6 }, (_, index) => ({
+  title: `Scene ${index + 1}`,
+  description: `Instruction for scene ${index + 1}`,
+  type: 'slide' as const,
+  keyPoints: [`Point ${index + 1}`],
+}));
+
 function makeDeps(overrides: Partial<CurriculumToolDeps> = {}): CurriculumToolDeps {
   return {
     store: makeStore(ownedDoc('stage-b', 'Course B')),
@@ -200,6 +208,17 @@ async function runTool(
 }
 
 describe('create_stage', () => {
+  it('requires a complete instructional plan in the runtime tool schema', () => {
+    const createStage = buildCurriculumTools(makeDeps()).find(
+      (tool) => tool.name === 'create_stage',
+    );
+    expect(createStage).toBeDefined();
+    expect(Value.Check(createStage!.parameters, { title: 'Course' })).toBe(false);
+    expect(Value.Check(createStage!.parameters, { title: 'Course', outlines: sixScenePlan })).toBe(
+      true,
+    );
+  });
+
   it('emits courseLink after creating the stage', async () => {
     const onStageLink = vi.fn();
     const result = await runTool(makeDeps({ store: makeStore(), onStageLink }), 'create_stage', {
@@ -220,6 +239,7 @@ describe('create_stage', () => {
     const result = await runTool(deps, 'create_stage', {
       title: 'Day 1 — Python',
       brief: 'basics',
+      outlines: sixScenePlan,
     });
 
     expect(result.isError).toBeUndefined();
@@ -234,12 +254,17 @@ describe('create_stage', () => {
     expect(saved?.stage.description).toBe('basics');
     expect(saved?.scenes).toEqual([]);
     expect(saved?.outline).toMatchObject({
-      outlines: [],
       requirement: 'Day 1 — Python',
-      generationComplete: true,
+      generationComplete: false,
+      generationIntent: 'instructional',
       producer: 'server-job',
       producerRef: 'session-1',
     });
+    expect(
+      (saved?.outline as { outlines: Array<{ id: string; order: number }> }).outlines.map(
+        ({ id, order }) => ({ id, order }),
+      ),
+    ).toEqual(sixScenePlan.map((_, index) => ({ id: `p${index + 1}`, order: index + 1 })));
   });
 
   it('omits description and producerRef when not provided', async () => {

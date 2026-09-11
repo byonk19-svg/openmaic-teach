@@ -54,6 +54,24 @@ describe('browser audit generation gate', () => {
     expect(mocks.start).not.toHaveBeenCalled();
   });
 
+  it('does not make a server-owned generated course QA-ready from an empty outline', async () => {
+    mocks.document = {
+      outline: {
+        outlines: [],
+        producer: 'server-job',
+        requirement: 'Generated course',
+        generationComplete: true,
+      },
+      scenes: [],
+    };
+
+    const response = await POST(request('POST'), params());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: 'generation_incomplete' });
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
   it('keeps a completed stage QA-ready and starts the existing runner', async () => {
     mocks.document = { outline: { generationComplete: true } };
 

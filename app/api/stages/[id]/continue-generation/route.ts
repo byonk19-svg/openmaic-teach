@@ -8,18 +8,22 @@ import {
   validateStageSceneGenerationContext,
 } from '@/lib/server/stage-scene-generator';
 import type { NextSceneStore, StageDocument } from '@/lib/server/stage-next-scene';
+import { inspectStageGeneration } from '@/lib/server/stage-generation-state';
 
 export const runtime = 'nodejs';
 const runner = createStageContinuationRunner();
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ stageId: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withRequestOwnerId(req, async (ownerId, headers) => {
-    const { stageId } = await params;
+    const { id: stageId } = await params;
     const store = await getOwnerScopedDocumentStore(ownerId);
     const document = await store.loadDocument(stageId);
     if (!document) return NextResponse.json({ error: 'not_found' }, { status: 404, headers });
     const stageDocument = document as unknown as StageDocument;
-    if (stageDocument.outline?.generationComplete)
+    const generation = inspectStageGeneration(stageDocument);
+    if (generation.status === 'invalid_outline')
+      return NextResponse.json({ error: 'generation_outline_invalid' }, { status: 409, headers });
+    if (generation.status === 'complete')
       return NextResponse.json({ status: 'already_complete' }, { status: 200, headers });
     const body = await req.json().catch(() => undefined);
     const resolveContinuationModel: typeof resolveModel = (params) =>

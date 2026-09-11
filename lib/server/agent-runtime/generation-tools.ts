@@ -382,6 +382,29 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
       }
       const doc = await deps.store.loadDocument(params.stageId);
       if (!doc) return result('No course document yet. Call create_stage first.', {}, true);
+      const planned = (doc.outline as AppDocumentOutline | undefined)?.outlines?.find(
+        (entry) => entry.order === params.order,
+      );
+      if ((doc.outline as AppDocumentOutline | undefined)?.generationIntent === 'instructional') {
+        if (!planned) {
+          return result(
+            'This page is not in the persisted course outline; nothing was generated.',
+            { error: 'outline-entry-missing', order: params.order },
+            true,
+          );
+        }
+        if (
+          planned.title !== params.title.trim() ||
+          planned.description !== params.brief.trim() ||
+          planned.type !== params.type
+        ) {
+          return result(
+            'This page does not match its persisted course outline; nothing was generated.',
+            { error: 'outline-entry-mismatch', outlineId: planned.id, order: params.order },
+            true,
+          );
+        }
+      }
       const existing = doc.scenes.find((scene) => scene.order === params.order);
       const title = params.title.trim();
       const brief = params.brief.trim();
@@ -558,12 +581,13 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
         );
       }
       const outline: SceneOutline = {
-        id: existing?.outlineId ?? `p${params.order}`,
+        ...(planned ?? {}),
+        id: planned?.id ?? existing?.outlineId ?? `p${params.order}`,
         order: params.order,
-        title,
-        type: params.type,
-        description: brief,
-        keyPoints: params.materialFacts ?? [],
+        title: planned?.title ?? title,
+        type: planned?.type ?? params.type,
+        description: planned?.description ?? brief,
+        keyPoints: planned?.keyPoints ?? params.materialFacts ?? [],
         ...(params.type === 'interactive' &&
         (params.widgetType !== undefined ||
           params.widgetOutline !== undefined ||
@@ -717,7 +741,10 @@ export function buildGenerationTools(deps: GenerationToolDeps): AgentTool<never,
         const finalized =
           'questions' in content
             ? finalizeReasoningGatedQuiz(outline, content)
-            : { ok: false as const, violations: ['reasoningGate generation did not produce quiz questions'] };
+            : {
+                ok: false as const,
+                violations: ['reasoningGate generation did not produce quiz questions'],
+              };
         if (!finalized.ok) {
           return result(
             `Reasoning gate check requires regeneration; nothing was written. ${finalized.violations.join('; ')}`,

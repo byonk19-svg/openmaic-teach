@@ -35,6 +35,8 @@ export interface AppDocumentOutline {
    */
   requirement?: string;
   generationComplete?: boolean;
+  /** Explicitly distinguishes an instructional plan from a deliberate empty course. */
+  generationIntent?: 'instructional' | 'zero-scene';
   /** Absent = `'client'`, i.e. every course written before the agent runtime. */
   producer?: DocumentProducer;
   /** Opaque handle of the producing job, when one owns the course. */
