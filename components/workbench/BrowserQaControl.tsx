@@ -8,6 +8,7 @@ type Check = { name: string; status: 'PASS' | 'FAIL' | 'WARNING' | 'UNVERIFIED';
 type Scene = { order: number; title: string; type: string; checks: Check[]; screenshot: string };
 type AuditState = {
   status: Status;
+  qaReady?: boolean;
   error?: string;
   summary?: Record<string, number>;
   report?: { scenes: Scene[] };
@@ -20,18 +21,30 @@ export function BrowserQaControl({ stageId }: { readonly stageId: string }) {
     if (response.ok) setState(await response.json());
   }, [stageId]);
   useEffect(() => {
-    void refresh();
-    if (state.status !== 'running') return;
+    const refreshTimer = window.setTimeout(() => void refresh(), 0);
+    if (state.status !== 'running') return () => window.clearTimeout(refreshTimer);
     const timer = window.setInterval(() => void refresh(), 1000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(refreshTimer);
+      window.clearInterval(timer);
+    };
   }, [refresh, state.status]);
   const start = async () => {
+    if (state.qaReady !== true) return;
     setState({ status: 'running' });
     const response = await fetch(`/api/browser-audit/${encodeURIComponent(stageId)}`, {
       method: 'POST',
     });
-    if (!response.ok) setState({ status: 'failed', error: 'QA failed to start.' });
-    else void refresh();
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setState(
+        body?.error === 'generation_incomplete'
+          ? { status: 'idle', qaReady: false }
+          : { status: 'failed', error: 'QA failed to start.' },
+      );
+      return;
+    }
+    void refresh();
   };
   return (
     <div className="relative shrink-0">
@@ -39,7 +52,7 @@ export function BrowserQaControl({ stageId }: { readonly stageId: string }) {
         type="button"
         data-testid="workbench-run-learner-qa"
         onClick={() => void start()}
-        disabled={state.status === 'running'}
+        disabled={state.status === 'running' || state.qaReady !== true}
         className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-violet-300 px-3 text-[11px] font-medium text-violet-700 disabled:opacity-50 dark:border-violet-500/50 dark:text-violet-300"
       >
         {state.status === 'running' ? (
@@ -49,6 +62,11 @@ export function BrowserQaControl({ stageId }: { readonly stageId: string }) {
         )}
         {state.status === 'running' ? 'QA running' : 'Run Learner QA'}
       </button>
+      {state.qaReady === false ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Generation must finish before learner QA can run.
+        </p>
+      ) : null}
       {state.status === 'failed' ? (
         <p className="absolute right-0 top-9 z-20 w-64 rounded bg-red-50 p-2 text-xs text-red-700 shadow">
           {state.error ?? 'QA failed.'}

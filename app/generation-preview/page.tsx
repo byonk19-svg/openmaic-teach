@@ -1050,6 +1050,15 @@ function GenerationPreviewContent() {
       sessionStorage.removeItem('generationSession');
       const persisted = await store.saveToStorage();
       if (!persisted) throw new Error('Generated scene could not be persisted.');
+      const continuation = await fetch(
+        `/api/stages/${encodeURIComponent(stage.id)}/continue-generation`,
+        {
+          method: 'POST',
+          headers: getApiHeaders(),
+          body: JSON.stringify(withThinkingConfig({})),
+        },
+      );
+      if (!continuation.ok) throw new Error('Remaining scene generation could not be started.');
       const requestedGate = (contentData.effectiveOutline || firstOutline).reasoningGate;
       if (requestedGate) {
         await store.loadFromStorage(stage.id);

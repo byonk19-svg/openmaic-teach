@@ -15,6 +15,7 @@ export type CourseSceneType =
   | 'unknown-interactive';
 
 export const ACTIVE_SCENE_TEXT_SELECTOR = '[data-testid="active-scene-content"]';
+export const REASONING_GATE_READINESS_TIMEOUT_MS = 10_000;
 
 export interface CourseAuditOptions {
   baseURL: string;
@@ -250,7 +251,33 @@ async function captureSceneScreenshot(page: Page, path: string, timeoutMs: numbe
   await page.screenshot({ path, fullPage: false, timeout: Math.min(timeoutMs, 10_000) });
 }
 
-async function inspectReasoningGate(
+export interface ReasoningGateReadinessProbe {
+  waitForActiveQuiz(timeoutMs: number): Promise<void>;
+  waitForAnswerVisible(timeoutMs: number): Promise<void>;
+  waitForAnswerActionable(timeoutMs: number): Promise<void>;
+}
+
+export async function waitForReasoningGateReady(
+  probe: ReasoningGateReadinessProbe,
+  timeoutMs: number,
+): Promise<{ ready: boolean; detail: string }> {
+  const readinessTimeoutMs = Math.min(timeoutMs, REASONING_GATE_READINESS_TIMEOUT_MS);
+  try {
+    await probe.waitForActiveQuiz(readinessTimeoutMs);
+    await probe.waitForAnswerVisible(readinessTimeoutMs);
+    await probe.waitForAnswerActionable(readinessTimeoutMs);
+    return { ready: true, detail: 'Short-answer control is visible and actionable.' };
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300);
+    return {
+      ready: false,
+      detail: `Expected short-answer control did not become ready within ${readinessTimeoutMs}ms: ${reason}`,
+    };
+  }
+}
+
+export async function inspectReasoningGate(
   page: Page,
   checks: AuditCheck[],
   timeoutMs: number,
@@ -258,18 +285,29 @@ async function inspectReasoningGate(
   const start = page.getByRole('button', { name: 'Start Quiz' });
   if (await start.isVisible().catch(() => false)) await start.click();
   const answer = page.getByPlaceholder('Type your answer here...');
-  const hasAnswer = await answer.isVisible().catch(() => false);
-  if (hasAnswer) {
+  const readiness = await waitForReasoningGateReady(
+    {
+      waitForActiveQuiz: (timeout) =>
+        page.getByRole('button', { name: 'Submit Answers' }).waitFor({ state: 'visible', timeout }),
+      waitForAnswerVisible: (timeout) => answer.waitFor({ state: 'visible', timeout }),
+      waitForAnswerActionable: (timeout) =>
+        answer.isEditable({ timeout }).then((actionable) => {
+          if (!actionable) throw new Error('Short-answer control was not actionable.');
+        }),
+    },
+    timeoutMs,
+  );
+  if (readiness.ready) {
     checks.push({
       name: 'learner answer control',
       status: 'PASS',
-      detail: 'Short-answer control is visible and actionable.',
+      detail: readiness.detail,
     });
   } else {
     checks.push({
       name: 'learner answer control',
       status: 'FAIL',
-      detail: 'Expected short-answer control was not visible.',
+      detail: readiness.detail,
     });
   }
   const report = page.getByText('Quiz Report', { exact: true });
@@ -291,7 +329,6 @@ async function inspectReasoningGate(
       ? 'Explanation was visible before review.'
       : 'Explanation is locked before review.',
   });
-  await answer.waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => undefined);
   return false;
 }
 

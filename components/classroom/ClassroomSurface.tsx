@@ -29,15 +29,14 @@ import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
 import { useSettingsStore } from '@/lib/store/settings';
 import { claimStageSceneLoadToken, isCurrentStageSceneLoadToken } from '@/lib/store/stage';
-import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { useCanvasStore } from '@/lib/store/canvas';
 import { createLogger } from '@/lib/logger';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
+import { requestStageContinuation } from '@/lib/classroom/continue-generation-client';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { FileQuestion, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -90,12 +89,6 @@ export function ClassroomSurface({
   const [notFound, setNotFound] = useState(false);
 
   const generationStartedRef = useRef(false);
-
-  const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
-    onComplete: () => {
-      log.info('[Classroom] All scenes generated');
-    },
-  });
 
   const loadClassroom = useCallback(
     async (isEffectCurrent: () => boolean = () => true): Promise<ClassroomLoadOutcome> => {
@@ -206,13 +199,11 @@ export function ClassroomSurface({
     };
     void loadUntilAvailable();
 
-    // Cancel ongoing generation when classroomId changes or component unmounts
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
-      stop();
     };
-  }, [classroomId, loadClassroom, stop, variant]);
+  }, [classroomId, loadClassroom, variant]);
 
   // Auto-resume generation for pending outlines (owner only). The reference
   // additionally gates on a transport-persistence UI fence and the store's
@@ -233,15 +224,6 @@ export function ClassroomSurface({
       return;
     }
     const state = useStageStore.getState();
-    // Producer ownership is document data, not conversation status. A
-    // server-job course never starts a second browser-side generator no matter
-    // which chat is open (or whether any chat is open).
-    if (state.outlineProducer === 'server-job') {
-      generationStartedRef.current = true;
-      log.info('[Classroom] A server-side job owns this course; the browser will not generate.');
-      return;
-    }
-
     const { outlines, scenes, stage, generationComplete } = state;
 
     // Check if there are pending outlines. A finished deck is frozen for
@@ -254,45 +236,10 @@ export function ClassroomSurface({
     if (hasPending && stage) {
       generationStartedRef.current = true;
 
-      // Load generation params from sessionStorage (stored by generation-preview before navigating)
-      const genParamsStr = sessionStorage.getItem('generationParams');
-      const params = genParamsStr ? JSON.parse(genParamsStr) : {};
-
-      // Reconstruct imageMapping for the resumed generation. The mapping may
-      // MIX allocated asset ids and IndexedDB data URLs — a source whose cache
-      // write failed materialized its own images — so the resume mapping merges
-      // both, instead of choosing one transport for the whole set and silently
-      // dropping the other half.
-      const pdfImages = (params.pdfImages || []) as Array<
-        { id: string; assetId?: string; storageId?: string } & Record<string, unknown>
-      >;
-      const finishResume = (imageMapping: Record<string, string>) =>
-        generateRemaining({
-          pdfImages: params.pdfImages,
-          imageMapping,
-          stageInfo: {
-            name: stage.name || '',
-            description: stage.description,
-            style: stage.style,
-          },
-          agents: params.agents,
-          userProfile: params.userProfile,
-          languageDirective: params.languageDirective || stage.languageDirective,
-        });
-
-      const imageMapping: Record<string, string> = {};
-      for (const img of pdfImages) {
-        if (img.assetId) imageMapping[img.id] = img.assetId;
-      }
-      const storageIds = pdfImages
-        .filter((img) => !img.assetId && img.storageId)
-        .map((img) => img.storageId as string);
-      void (async () => {
-        if (storageIds.length > 0) {
-          Object.assign(imageMapping, await loadImageMapping(storageIds));
-        }
-        finishResume(imageMapping);
-      })();
+      void requestStageContinuation(stage.id).catch((err) => {
+        generationStartedRef.current = false;
+        log.warn('[Classroom] Continuation request failed:', err);
+      });
     } else if (outlines.length > 0 && stage) {
       // All scenes are generated, but some media may not have finished.
       // Resume media generation for any tasks not yet in IndexedDB.
@@ -314,7 +261,7 @@ export function ClassroomSurface({
         log.warn('[Classroom] Media generation resume error:', err);
       });
     }
-  }, [loading, error, generateRemaining]);
+  }, [loading, error]);
 
   return (
     <ThemeProvider>
@@ -383,7 +330,7 @@ export function ClassroomSurface({
               </div>
             </div>
           ) : (
-            <Stage classroomId={classroomId} onRetryOutline={retrySingleOutline} />
+            <Stage classroomId={classroomId} />
           )}
         </div>
       </MediaStageProvider>
