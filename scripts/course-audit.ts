@@ -507,20 +507,36 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
       };
       try {
         console.log(`[audit] scene ${scene.order}: ${scene.title}`);
+        const activeScene = page.locator(ACTIVE_SCENE_TEXT_SELECTOR);
+        const previousSceneId = await activeScene.getAttribute('data-scene-id');
         await page
           .locator('[data-testid="scene-item"]')
           .nth(entry.index)
           .evaluate((node: HTMLElement) =>
             node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })),
           );
+        if (entry.index > 0 && previousSceneId) {
+          await page.waitForFunction(
+            ({ selector, previous }) => document.querySelector(selector)?.getAttribute('data-scene-id') !== previous,
+            { selector: ACTIVE_SCENE_TEXT_SELECTOR, previous: previousSceneId },
+            { timeout: Math.min(options.timeoutMs, 5_000) },
+          );
+        }
         await page
           .getByRole('button', { name: 'Start Quiz' })
           .or(page.getByPlaceholder('Type your answer here...'))
           .or(page.locator(ACTIVE_SCENE_TEXT_SELECTOR))
           .first()
           .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
+        const plannedReasoningGate = /reasoning gate/i.test(entry.label);
+        if (plannedReasoningGate) {
+          await page
+            .getByRole('button', { name: 'Start Quiz' })
+            .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
+        }
         scene.title = await currentTitle(page, scene.title);
         const hasGate =
+          plannedReasoningGate ||
           (await page.getByPlaceholder('Type your answer here...').count()) > 0 ||
           (await page.getByRole('button', { name: 'Start Quiz' }).count()) > 0;
         const iframeCount = await page
