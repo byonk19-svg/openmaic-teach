@@ -510,8 +510,14 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
         await page
           .locator('[data-testid="scene-item"]')
           .nth(entry.index)
-          .evaluate((node: HTMLElement) => node.click());
-        await page.waitForTimeout(300);
+          .evaluate((node: HTMLElement) =>
+            node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })),
+          );
+        await page
+          .getByRole('button', { name: 'Start Quiz' })
+          .or(page.getByPlaceholder('Type your answer here...'))
+          .or(page.locator(ACTIVE_SCENE_TEXT_SELECTOR))
+          .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
         scene.title = await currentTitle(page, scene.title);
         const hasGate =
           (await page.getByPlaceholder('Type your answer here...').count()) > 0 ||
