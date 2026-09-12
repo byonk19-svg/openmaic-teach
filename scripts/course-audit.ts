@@ -517,6 +517,7 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
           .getByRole('button', { name: 'Start Quiz' })
           .or(page.getByPlaceholder('Type your answer here...'))
           .or(page.locator(ACTIVE_SCENE_TEXT_SELECTOR))
+          .first()
           .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
         scene.title = await currentTitle(page, scene.title);
         const hasGate =
