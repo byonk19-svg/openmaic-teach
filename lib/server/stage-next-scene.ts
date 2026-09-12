@@ -48,7 +48,8 @@ export async function generateAndPersistNextScene(input: {
   if (
     scene.stageId !== input.stageId ||
     scene.outlineId !== next.id ||
-    scene.order !== next.order
+    scene.order !== next.order ||
+    (next.type !== undefined && scene.type !== next.type)
   ) {
     throw new Error(`Generated scene does not match requested outline ${next.id}`);
   }

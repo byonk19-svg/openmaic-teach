@@ -117,4 +117,32 @@ describe('generateAndPersistNextScene', () => {
     ).rejects.toThrow('provider failed');
     expect(saveDocument).not.toHaveBeenCalled();
   });
+
+  it('rejects a generated scene whose type does not match its persisted outline', async () => {
+    const document = {
+      stage: { id: 'stage-1' },
+      scenes: [],
+      outline: { outlines: [{ ...outline('interactive', 1), type: 'interactive' }], generationComplete: false },
+    } as any;
+    const saveDocument = vi.fn();
+
+    await expect(
+      generateAndPersistNextScene({
+        stageId: 'stage-1',
+        store: { loadDocument: vi.fn().mockResolvedValue(document), saveDocument },
+        generate: vi.fn().mockResolvedValue({
+          id: 'scene-1',
+          stageId: 'stage-1',
+          outlineId: 'interactive',
+          order: 1,
+          title: 'Static substitute',
+          type: 'slide',
+          content: { type: 'slide' },
+          actions: [],
+        }),
+      }),
+    ).rejects.toThrow('Generated scene does not match requested outline interactive');
+
+    expect(saveDocument).not.toHaveBeenCalled();
+  });
 });

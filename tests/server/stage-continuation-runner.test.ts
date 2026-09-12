@@ -48,11 +48,13 @@ describe('stage continuation runner', () => {
       scene('stage-1', o.id, o.order),
     );
     const runner = createStageContinuationRunner();
+    const markComplete = vi.fn().mockResolvedValue(undefined);
     await expect(
-      runner.startOrResume({ stageId: 'stage-1', store: s, generate }),
+      runner.startOrResume({ stageId: 'stage-1', store: s, generate, markComplete }),
     ).resolves.toMatchObject({ status: 'completed', scenesPersisted: 2 });
     expect(generate).toHaveBeenCalledTimes(2);
     expect(s.doc.outline.generationComplete).toBe(true);
+    expect(markComplete).toHaveBeenCalledWith('stage-1');
   });
   it('shares one in-flight run for concurrent callers', async () => {
     const s = store();

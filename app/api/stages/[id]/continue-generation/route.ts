@@ -9,6 +9,8 @@ import {
 } from '@/lib/server/stage-scene-generator';
 import type { NextSceneStore, StageDocument } from '@/lib/server/stage-next-scene';
 import { inspectStageGeneration } from '@/lib/server/stage-generation-state';
+import { getStageAccessDb } from '@/lib/server/stage-access';
+import { markStageGenerationComplete } from '@/lib/persistence/stage-meta';
 
 export const runtime = 'nodejs';
 const runner = createStageContinuationRunner();
@@ -40,7 +42,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const alreadyRunning = runner.isRunning(stageId);
     const generate = createStageSceneGenerator({ resolveModel: resolveContinuationModel });
     void runner
-      .startOrResume({ stageId, store: store as unknown as NextSceneStore, generate })
+      .startOrResume({
+        stageId,
+        store: store as unknown as NextSceneStore,
+        generate,
+        markComplete: async (completedStageId) => {
+          await markStageGenerationComplete(await getStageAccessDb(), completedStageId);
+        },
+      })
       .catch(() => undefined);
     return NextResponse.json(
       { status: alreadyRunning ? 'already_running' : 'started' },

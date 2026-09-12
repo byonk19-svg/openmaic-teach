@@ -32,6 +32,7 @@ export function createStageContinuationRunner() {
       stageId: string;
       store: NextSceneStore;
       generate: (outline: { id: string; order: number }, document: StageDocument) => Promise<Scene>;
+      markComplete?: (stageId: string) => Promise<void>;
     }): Promise<StageContinuationResult> {
       const existing = running.get(input.stageId);
       if (existing) return existing;
@@ -74,6 +75,7 @@ export function createStageContinuationRunner() {
                   generationComplete: completion.status === 'complete',
                 },
               });
+              if (completion.status === 'complete') await input.markComplete?.(input.stageId);
               return completion.status === 'complete'
                 ? { status: 'completed', stageId: input.stageId, scenesPersisted }
                 : {

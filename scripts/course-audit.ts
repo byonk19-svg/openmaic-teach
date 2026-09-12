@@ -228,6 +228,8 @@ async function openSidebar(page: Page): Promise<void> {
   if (await firstScene.isVisible().catch(() => false)) return;
   const toggle = page.getByRole('button', { name: 'Toggle sidebar' });
   if (await toggle.isVisible().catch(() => false)) await toggle.click({ timeout: 5_000 });
+  else await page.keyboard.press('s');
+  await firstScene.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
 }
 
 async function sceneLabels(page: Page): Promise<string[]> {
@@ -508,7 +510,7 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
         await page
           .locator('[data-testid="scene-item"]')
           .nth(entry.index)
-          .click({ timeout: Math.min(options.timeoutMs, 5_000) });
+          .evaluate((node: HTMLElement) => node.click());
         await page.waitForTimeout(300);
         scene.title = await currentTitle(page, scene.title);
         const hasGate =
