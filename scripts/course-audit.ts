@@ -14,6 +14,12 @@ export type CourseSceneType =
   | 'interactive-simulation'
   | 'unknown-interactive';
 
+export type AuditSceneEntry = {
+  label: string;
+  index: number;
+  sceneType?: string;
+};
+
 export const ACTIVE_SCENE_TEXT_SELECTOR = '[data-testid="active-scene-content"]';
 export const REASONING_GATE_READINESS_TIMEOUT_MS = 10_000;
 
@@ -137,6 +143,10 @@ export function classifyScene(input: {
   return input.hasRangeControl ? 'interactive-simulation' : 'unknown-interactive';
 }
 
+export function expectsQuizSurface(entry: Pick<AuditSceneEntry, 'label' | 'sceneType'>): boolean {
+  return entry.sceneType === 'quiz' || /reasoning gate/i.test(entry.label);
+}
+
 function safeUrl(value: string): string {
   try {
     const url = new URL(value);
@@ -238,12 +248,16 @@ export async function openSidebar(page: Page, timeoutMs: number): Promise<void> 
   await firstScene.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
 }
 
-async function sceneLabels(page: Page): Promise<string[]> {
-  return page
-    .locator('[data-testid="scene-item"] [data-testid="scene-title"]')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => (node.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    );
+async function sceneEntries(page: Page): Promise<AuditSceneEntry[]> {
+  return page.locator('[data-testid="scene-item"]').evaluateAll((nodes) =>
+    nodes.map((node, index) => ({
+      index,
+      label: (node.querySelector('[data-testid="scene-title"]')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      sceneType: node.getAttribute('data-scene-type') ?? undefined,
+    })),
+  );
 }
 
 async function currentTitle(page: Page, fallback: string): Promise<string> {
@@ -492,14 +506,12 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
     await waitForClassroom(page, options.timeoutMs);
     console.log('[audit] classroom loaded');
     await openSidebar(page, options.timeoutMs);
-    const labels = await sceneLabels(page);
+    const entries = await sceneEntries(page);
     terminalProgressPositionDetected = await page
       .getByText('Course complete', { exact: true })
       .isVisible()
       .catch(() => false);
-    const instructional = labels
-      .map((label, index) => ({ label, index }))
-      .filter(({ label }) => !isTerminalProgressLabel(label));
+    const instructional = entries.filter(({ label }) => !isTerminalProgressLabel(label));
     console.log(`[audit] discovered ${instructional.length} instructional scene(s)`);
     for (const entry of instructional) {
       const diagnosticsAtStart = diagnostics.length;
@@ -535,8 +547,8 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
           .or(page.locator(ACTIVE_SCENE_TEXT_SELECTOR))
           .first()
           .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
-        const plannedReasoningGate = /reasoning gate/i.test(entry.label);
-        if (plannedReasoningGate) {
+        const expectedQuizSurface = expectsQuizSurface(entry);
+        if (expectedQuizSurface) {
           const startQuiz = page.getByRole('button', { name: 'Start Quiz' });
           try {
             await startQuiz.waitFor({
@@ -562,7 +574,7 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
         }
         scene.title = await currentTitle(page, scene.title);
         const hasGate =
-          plannedReasoningGate ||
+          expectedQuizSurface ||
           (await page.getByPlaceholder('Type your answer here...').count()) > 0 ||
           (await page.getByRole('button', { name: 'Start Quiz' }).count()) > 0;
         const iframeCount = await page

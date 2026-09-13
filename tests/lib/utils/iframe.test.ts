@@ -20,6 +20,14 @@ describe('patchHtmlForIframe', () => {
     expect(out.indexOf('data-iframe-storage-shim')).toBeLessThan(out.indexOf('window.__x'));
   });
 
+  it('keeps authored widget styles later in the head so they can override the baseline', () => {
+    const out = patchHtmlForIframe(
+      '<html><head><style id="authored">body { background: rebeccapurple; }</style></head><body></body></html>',
+    );
+
+    expect(out.indexOf('data-iframe-patch')).toBeLessThan(out.indexOf('id="authored"'));
+  });
+
   it('the shim provides a working in-memory storage when the real one throws', () => {
     // Execute the injected shim against a fake window whose localStorage getter
     // throws (mirroring a null-origin sandboxed iframe), then assert the shim

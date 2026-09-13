@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ACTIVE_SCENE_TEXT_SELECTOR,
   classifyScene,
+  expectsQuizSurface,
   inspectReasoningGate,
   isTerminalProgressLabel,
   openSidebar,
@@ -11,6 +12,12 @@ import {
 } from '@/scripts/course-audit';
 
 describe('course audit runner helpers', () => {
+  it('waits for a quiz surface based on scene metadata, not its title', () => {
+    expect(expectsQuizSurface({ label: 'Escalation decision', sceneType: 'quiz' })).toBe(true);
+    expect(expectsQuizSurface({ label: 'Early reassessment', sceneType: 'slide' })).toBe(false);
+    expect(expectsQuizSurface({ label: 'Reasoning gate', sceneType: 'slide' })).toBe(true);
+  });
+
   it('opens the operable sidebar toggle even when its visibility probe is false', async () => {
     const click = vi.fn().mockResolvedValue(undefined);
     const press = vi.fn().mockResolvedValue(undefined);

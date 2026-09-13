@@ -124,4 +124,42 @@ describe('learner completion', () => {
       ),
     ).toBe(true);
   });
+
+  it('treats a legacy gate id as immutable compatibility identity', async () => {
+    const module = (await import('@/lib/classroom/learner-completion')) as Record<string, unknown>;
+    const isLearnerCourseComplete = module.isLearnerCourseComplete as
+      | ((scenes: Scene[], attempts: Map<string, unknown>) => boolean)
+      | undefined;
+
+    expect(isLearnerCourseComplete).toBeTypeOf('function');
+    if (!isLearnerCourseComplete) return;
+
+    const revisedPrompt = {
+      ...legacyGateScene,
+      content: {
+        ...legacyGateScene.content,
+        questions: [
+          {
+            ...legacyGateScene.content.questions[0],
+            commentPrompt: 'Gated grading rubric: revised wording, same legacy gate id.',
+          },
+        ],
+      },
+    } as Scene;
+
+    expect(
+      isLearnerCourseComplete(
+        [revisedPrompt],
+        new Map([
+          [
+            legacyGateScene.id,
+            {
+              phase: 'reviewed',
+              results: [{ questionId: 'legacy-question', correct: true }],
+            },
+          ],
+        ]),
+      ),
+    ).toBe(true);
+  });
 });

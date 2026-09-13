@@ -47,7 +47,9 @@ function hasPassedGate(
 /**
  * Learner completion is intentionally distinct from course generation. A generated
  * course becomes learner-complete only after every authored reasoning gate has a
- * durable pass bound to its current question and rubric.
+ * durable pass. Structured gates bind a pass to the current question and rubric.
+ * Legacy `commentPrompt` gates predate that key: their stable question id is their
+ * compatibility identity, so changing a legacy gate requires issuing a new id.
  */
 export function learnerCompletionSummary(
   scenes: readonly Scene[],

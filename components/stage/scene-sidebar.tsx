@@ -175,6 +175,7 @@ export function SceneSidebar({
               <div
                 key={scene.id}
                 data-testid="scene-item"
+                data-scene-type={scene.type}
                 role="button"
                 tabIndex={0}
                 aria-current={isActive ? 'page' : undefined}
@@ -365,16 +366,19 @@ export function SceneSidebar({
               return (
                 <div
                   key={`generating-${outline.id}`}
-                  onClick={() => {
-                    if (isFailed) return;
-                    if (onSceneSelect) {
-                      onSceneSelect(PENDING_SCENE_ID);
-                    } else {
-                      setCurrentSceneId(PENDING_SCENE_ID);
-                    }
-                  }}
+                  {...(!isFailed
+                    ? {
+                        role: 'button' as const,
+                        tabIndex: 0,
+                        'aria-current': isActive ? ('page' as const) : undefined,
+                        'aria-label': `${scenes.length + 1}. ${outline.title}`,
+                        onClick: () => selectScene(PENDING_SCENE_ID),
+                        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) =>
+                          handleSceneKeyDown(event, PENDING_SCENE_ID),
+                      }
+                    : {})}
                   className={cn(
-                    'group relative rounded-lg flex flex-col gap-1 p-1.5 transition-all duration-200',
+                    'group relative rounded-lg flex flex-col gap-1 p-1.5 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
                     isFailed
                       ? 'opacity-100 cursor-default'
                       : 'cursor-pointer hover:bg-gray-50/80 dark:hover:bg-gray-800/50',
