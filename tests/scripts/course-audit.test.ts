@@ -4,12 +4,41 @@ import {
   classifyScene,
   inspectReasoningGate,
   isTerminalProgressLabel,
+  openSidebar,
   parseCourseAuditArgs,
   renderCourseAuditMarkdown,
   waitForReasoningGateReady,
 } from '@/scripts/course-audit';
 
 describe('course audit runner helpers', () => {
+  it('opens the operable sidebar toggle even when its visibility probe is false', async () => {
+    const click = vi.fn().mockResolvedValue(undefined);
+    const press = vi.fn().mockResolvedValue(undefined);
+    const waitFor = vi.fn().mockResolvedValue(undefined);
+    const toggleWaitFor = vi.fn().mockResolvedValue(undefined);
+    const firstScene = {
+      isVisible: vi.fn().mockResolvedValue(false),
+      waitFor,
+    };
+    const toggle = {
+      isVisible: vi.fn().mockResolvedValue(false),
+      waitFor: toggleWaitFor,
+      click,
+    };
+    const page = {
+      locator: vi.fn(() => ({ first: () => firstScene })),
+      getByRole: vi.fn(() => toggle),
+      keyboard: { press },
+    };
+
+    await openSidebar(page as never, 30_000);
+
+    expect(click).toHaveBeenCalledWith({ timeout: 5_000 });
+    expect(press).not.toHaveBeenCalled();
+    expect(toggleWaitFor).toHaveBeenCalledWith({ state: 'attached', timeout: 30_000 });
+    expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 5_000 });
+  });
+
   it('extracts learner text only from the active scene surface', () => {
     expect(ACTIVE_SCENE_TEXT_SELECTOR).toBe('[data-testid="active-scene-content"]');
   });

@@ -8,6 +8,8 @@ describe('patchHtmlForIframe', () => {
     );
     expect(out).toContain('data-iframe-storage-shim');
     expect(out).toContain('data-iframe-patch');
+    expect(out).toContain('font-family: Inter, ui-sans-serif');
+    expect(out).toContain('accent-color: #7c3aed');
   });
 
   it('runs the storage shim before the page scripts', () => {

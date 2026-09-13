@@ -63,6 +63,12 @@ import {
   getSlideElementTypeLabel,
 } from '@/components/canvas/slide-element-pick-overlay';
 import { shouldClearDraftElementReference } from '@/components/chat/element-reference-receipt';
+import {
+  learnerCompletionSummary,
+  reasoningGateSceneIds,
+  type LearnerCompletionSummary,
+} from '@/lib/classroom/learner-completion';
+import { loadQuizAttemptState, type QuizAttemptState } from '@/lib/quiz/runtime';
 
 type DraftSlideElementReference = {
   reference: SlideElementReference;
@@ -138,6 +144,55 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     } = useStageStore();
     const failedOutlines = useStageStore.use.failedOutlines();
     const generationComplete = useStageStore.use.generationComplete();
+
+    const [learnerCompletion, setLearnerCompletion] = useState<{
+      status: 'loading' | 'ready';
+      summary: LearnerCompletionSummary;
+    }>({
+      status: 'loading',
+      summary: { requiredGateCount: 0, passedGateCount: 0, isComplete: false },
+    });
+    const [completionRefresh, setCompletionRefresh] = useState(0);
+    const completionStageId = stage?.id ?? scenes[0]?.stageId;
+    const completionGateSceneIds = useMemo(() => reasoningGateSceneIds(scenes), [scenes]);
+
+    useEffect(() => {
+      const refresh = () => setCompletionRefresh((version) => version + 1);
+      window.addEventListener('maic:quiz-review-completed', refresh);
+      return () => window.removeEventListener('maic:quiz-review-completed', refresh);
+    }, []);
+
+    useEffect(() => {
+      let cancelled = false;
+      if (!completionStageId) {
+        setLearnerCompletion({
+          status: 'ready',
+          summary: { requiredGateCount: 0, passedGateCount: 0, isComplete: true },
+        });
+        return;
+      }
+      setLearnerCompletion((current) => ({ ...current, status: 'loading' }));
+      void Promise.all(
+        completionGateSceneIds.map(async (sceneId) => {
+          try {
+            const { state } = await loadQuizAttemptState({ stageId: completionStageId, sceneId });
+            return [sceneId, state] as const;
+          } catch {
+            return [sceneId, undefined] as const;
+          }
+        }),
+      ).then((entries) => {
+        if (cancelled) return;
+        const attempts = new Map<string, QuizAttemptState | undefined>(entries);
+        setLearnerCompletion({
+          status: 'ready',
+          summary: learnerCompletionSummary(scenes, attempts),
+        });
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [completionGateSceneIds, completionRefresh, completionStageId, currentSceneId, scenes]);
 
     const currentScene = getCurrentScene();
     const piChatEnabled = isPiChatEnabled();
@@ -1172,10 +1227,13 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     // generationComplete flag also marks completion directly, so an edited
     // finished deck (e.g. a deleted slide, leaving outlines.length > scenes)
     // still reads as complete.
-    const isCourseComplete =
+    const isGenerationComplete =
       generationComplete ||
       (outlines.length > 0 && scenes.length === outlines.length && generatingOutlines.length === 0);
-    const canAdvanceToPendingSlot = hasNextPending || isCourseComplete;
+    const isLearnerComplete =
+      learnerCompletion.status === 'ready' && learnerCompletion.summary.isComplete;
+    const canShowCourseComplete = isGenerationComplete && isLearnerComplete;
+    const canAdvanceToPendingSlot = hasNextPending || canShowCourseComplete;
 
     // previous scene (gated)
     const handlePreviousScene = useCallback(() => {
@@ -1458,7 +1516,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
           onCollapseChange={setSidebarCollapsed}
           onSceneSelect={gatedSceneSwitch}
           onRetryOutline={onRetryOutline}
-          isCourseComplete={isCourseComplete}
+          isCourseComplete={canShowCourseComplete}
         />
 
         {/* Main Content Area */}
@@ -1470,7 +1528,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
             <Header
               currentSceneTitle={
                 currentScene?.title ||
-                (isCourseComplete && isPendingScene ? t('stage.courseComplete') : '')
+                (canShowCourseComplete && isPendingScene ? t('stage.courseComplete') : '')
               }
               mode={mode}
               proModeActive={proModeActive}
@@ -1534,7 +1592,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
               onCancelElementPick={() => setElementPickActive(false)}
               hideToolbar={mode === 'playback' || (isPresenting && !controlsVisible)}
               isPendingScene={isPendingScene}
-              isCourseComplete={isCourseComplete}
+              isCourseComplete={canShowCourseComplete}
               isGenerationFailed={
                 isPendingScene && failedOutlines.some((f) => f.id === generatingOutlines[0]?.id)
               }

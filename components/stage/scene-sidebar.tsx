@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   PanelLeftClose,
@@ -103,6 +103,23 @@ export function SceneSidebar({
     return icons[type] || BookOpen;
   };
 
+  const selectScene = useCallback(
+    (sceneId: string) => {
+      if (onSceneSelect) onSceneSelect(sceneId);
+      else setCurrentSceneId(sceneId);
+    },
+    [onSceneSelect, setCurrentSceneId],
+  );
+
+  const handleSceneKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>, sceneId: string) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectScene(sceneId);
+    },
+    [selectScene],
+  );
+
   const displayWidth = collapsed ? 0 : sidebarWidth;
 
   return (
@@ -158,15 +175,14 @@ export function SceneSidebar({
               <div
                 key={scene.id}
                 data-testid="scene-item"
-                onClick={() => {
-                  if (onSceneSelect) {
-                    onSceneSelect(scene.id);
-                  } else {
-                    setCurrentSceneId(scene.id);
-                  }
-                }}
+                role="button"
+                tabIndex={0}
+                aria-current={isActive ? 'page' : undefined}
+                aria-label={`${index + 1}. ${scene.title}`}
+                onClick={() => selectScene(scene.id)}
+                onKeyDown={(event) => handleSceneKeyDown(event, scene.id)}
                 className={cn(
-                  'group relative rounded-lg transition-all duration-200 cursor-pointer flex flex-col gap-1 p-1.5',
+                  'group relative rounded-lg transition-all duration-200 cursor-pointer flex flex-col gap-1 p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
                   isActive
                     ? 'bg-purple-50 dark:bg-purple-900/20 ring-1 ring-purple-200 dark:ring-purple-700'
                     : 'hover:bg-gray-50/80 dark:hover:bg-gray-800/50',
@@ -467,15 +483,14 @@ export function SceneSidebar({
               return (
                 <div
                   key="course-complete-slot"
-                  onClick={() => {
-                    if (onSceneSelect) {
-                      onSceneSelect(PENDING_SCENE_ID);
-                    } else {
-                      setCurrentSceneId(PENDING_SCENE_ID);
-                    }
-                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={t('stage.courseComplete')}
+                  onClick={() => selectScene(PENDING_SCENE_ID)}
+                  onKeyDown={(event) => handleSceneKeyDown(event, PENDING_SCENE_ID)}
                   className={cn(
-                    'group relative rounded-lg flex flex-col gap-1 p-1.5 transition-all duration-200 cursor-pointer hover:bg-amber-50/60 dark:hover:bg-amber-900/10',
+                    'group relative rounded-lg flex flex-col gap-1 p-1.5 transition-all duration-200 cursor-pointer hover:bg-amber-50/60 dark:hover:bg-amber-900/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
                     !isActive && 'opacity-80',
                     isActive &&
                       'bg-amber-50 dark:bg-amber-900/20 ring-1 ring-amber-200 dark:ring-amber-700 opacity-100',

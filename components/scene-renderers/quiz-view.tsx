@@ -896,6 +896,9 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       if (outcome.phase === 'reviewing') {
         setResults([outcome.result]);
         setPhase('reviewing');
+        window.dispatchEvent(
+          new CustomEvent('maic:quiz-review-completed', { detail: { stageId, sceneId } }),
+        );
       } else {
         setResults([]);
         setGateFeedback(outcome);
@@ -968,6 +971,17 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       if (cancelled) return;
       setResults(ordered);
       setPhase('reviewing');
+      if (
+        questions.some(
+          (question) =>
+            question.type === 'short_answer' &&
+            /^gated grading rubric:/i.test(question.commentPrompt ?? ''),
+        )
+      ) {
+        window.dispatchEvent(
+          new CustomEvent('maic:quiz-review-completed', { detail: { stageId, sceneId } }),
+        );
+      }
     })();
 
     return () => {

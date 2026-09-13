@@ -295,9 +295,36 @@ export function patchHtmlForIframe(html: string): string {
     overflow-x: hidden;
     overflow-y: auto;
   }
-  /* Fix min-h-screen: in iframes 100vh is the iframe height, which is correct,
-     but ensure body actually fills it */
-  body { min-height: 100vh; }
+  /* A safe baseline for simple authored widgets. Deliberate widget styles can
+     still override this, while otherwise-bare controls match the classroom. */
+  body {
+    min-height: 100vh;
+    box-sizing: border-box;
+    padding: clamp(1.25rem, 3vw, 2.5rem);
+    background: #f8fafc;
+    color: #172554;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  h1, h2, h3 { margin: 0 0 1rem; color: #1e1b4b; line-height: 1.2; }
+  h1 { font-size: clamp(1.25rem, 2.2vw, 1.75rem); }
+  p { margin: 0.5rem 0; }
+  button, input, select, textarea { font: inherit; }
+  button {
+    min-height: 2.25rem;
+    border: 1px solid #c7d2fe;
+    border-radius: 0.5rem;
+    background: #eef2ff;
+    color: #312e81;
+    cursor: pointer;
+  }
+  input[type="range"] { accent-color: #7c3aed; }
+  input[type="range"] { display: block; width: min(100%, 24rem); margin: 0.5rem 0 1rem; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 3px solid rgba(124, 58, 237, 0.45);
+    outline-offset: 2px;
+  }
 </style>`;
 
   const injection =

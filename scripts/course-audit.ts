@@ -223,12 +223,18 @@ async function waitForClassroom(page: Page, timeoutMs: number): Promise<void> {
   await page.getByText('Loading classroom...').waitFor({ state: 'hidden', timeout: timeoutMs });
 }
 
-async function openSidebar(page: Page): Promise<void> {
+export async function openSidebar(page: Page, timeoutMs: number): Promise<void> {
   const firstScene = page.locator('[data-testid="scene-item"]').first();
   if (await firstScene.isVisible().catch(() => false)) return;
   const toggle = page.getByRole('button', { name: 'Toggle sidebar' });
-  if (await toggle.isVisible().catch(() => false)) await toggle.click({ timeout: 5_000 });
-  else await page.keyboard.press('s');
+  try {
+    // A missing loading label is not enough: the compact playback control
+    // attaches after the classroom shell has rendered.
+    await toggle.waitFor({ state: 'attached', timeout: Math.min(timeoutMs, 30_000) });
+    await toggle.click({ timeout: 5_000 });
+  } catch {
+    await page.keyboard.press('s');
+  }
   await firstScene.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
 }
 
@@ -241,7 +247,7 @@ async function sceneLabels(page: Page): Promise<string[]> {
 }
 
 async function currentTitle(page: Page, fallback: string): Promise<string> {
-  const heading = page.locator('h1').first();
+  const heading = page.locator(`${ACTIVE_SCENE_TEXT_SELECTOR} h1`).first();
   if (await heading.isVisible().catch(() => false))
     return (await heading.innerText()).trim() || fallback;
   return fallback;
@@ -426,8 +432,7 @@ async function inspectSimulation(
       });
       return;
     }
-    await reset.click();
-    await page.waitForTimeout(250);
+    await reset.evaluate((node: HTMLButtonElement) => node.click());
     const resetValue = await control.inputValue();
     scene.resetScreenshot = `screenshots/scene-${String(scene.order).padStart(2, '0')}-reset.png`;
     await captureSceneScreenshot(page, join(outputDir, scene.resetScreenshot), timeoutMs);
@@ -457,6 +462,7 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
   const context = await browser.newContext();
   const scenes: AuditedScene[] = [];
   let terminalProgressPositionDetected = false;
+  let auditError: unknown;
   try {
     console.log(`[audit] opening ${options.stageId}`);
     await context.addInitScript(
@@ -485,7 +491,7 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
     });
     await waitForClassroom(page, options.timeoutMs);
     console.log('[audit] classroom loaded');
-    await openSidebar(page);
+    await openSidebar(page, options.timeoutMs);
     const labels = await sceneLabels(page);
     terminalProgressPositionDetected = await page
       .getByText('Course complete', { exact: true })
@@ -517,7 +523,8 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
           );
         if (entry.index > 0 && previousSceneId) {
           await page.waitForFunction(
-            ({ selector, previous }) => document.querySelector(selector)?.getAttribute('data-scene-id') !== previous,
+            ({ selector, previous }) =>
+              document.querySelector(selector)?.getAttribute('data-scene-id') !== previous,
             { selector: ACTIVE_SCENE_TEXT_SELECTOR, previous: previousSceneId },
             { timeout: Math.min(options.timeoutMs, 5_000) },
           );
@@ -530,9 +537,28 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
           .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
         const plannedReasoningGate = /reasoning gate/i.test(entry.label);
         if (plannedReasoningGate) {
-          await page
-            .getByRole('button', { name: 'Start Quiz' })
-            .waitFor({ state: 'visible', timeout: Math.min(options.timeoutMs, 5_000) });
+          const startQuiz = page.getByRole('button', { name: 'Start Quiz' });
+          try {
+            await startQuiz.waitFor({
+              state: 'visible',
+              timeout: Math.min(options.timeoutMs, 10_000),
+            });
+          } catch {
+            // A prior in-progress quiz can leave a later gate on its loading
+            // surface after the first scene-selection event. Re-selecting the
+            // same learner-visible item is idempotent and lets that surface
+            // finish mounting without answering or grading anything.
+            await page
+              .locator('[data-testid="scene-item"]')
+              .nth(entry.index)
+              .evaluate((node: HTMLElement) =>
+                node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })),
+              );
+            await startQuiz.waitFor({
+              state: 'visible',
+              timeout: Math.min(options.timeoutMs, 10_000),
+            });
+          }
         }
         scene.title = await currentTitle(page, scene.title);
         const hasGate =
@@ -575,9 +601,22 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
         scenes.push(scene);
       }
     }
+  } catch (error) {
+    auditError = error;
+    diagnostics.push(
+      `[audit] ${error instanceof Error ? error.message.slice(0, 500) : String(error)}`,
+    );
   } finally {
-    await context.close();
-    await browser.close();
+    await context.close().catch((error: unknown) => {
+      diagnostics.push(
+        `[audit] context cleanup: ${error instanceof Error ? error.message.slice(0, 500) : String(error)}`,
+      );
+    });
+    await browser.close().catch((error: unknown) => {
+      diagnostics.push(
+        `[audit] browser cleanup: ${error instanceof Error ? error.message.slice(0, 500) : String(error)}`,
+      );
+    });
   }
   const report: CourseAuditReport = {
     stageId: options.stageId,
@@ -592,6 +631,7 @@ export async function runCourseAudit(options: CourseAuditOptions): Promise<Cours
   };
   await writeFile(join(options.outputDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   await writeFile(join(options.outputDir, 'report.md'), renderCourseAuditMarkdown(report));
+  if (auditError) throw auditError;
   return report;
 }
 
