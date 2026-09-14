@@ -40,6 +40,7 @@ import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { sortDocumentImagesForVision } from '@/lib/document/bundle';
 import { resolveVisionImagesForPrompt } from '@/lib/persistence/resolve-vision-images';
 import { resolveVocationalActive } from '@/lib/config/feature-flags';
+import { validateReasoningGate } from '@/lib/quiz/reasoning-gate';
 const log = createLogger('Outlines Stream');
 
 export const maxDuration = 300;
@@ -267,6 +268,36 @@ function sanitizeNonTaskEngineOutline(outline: SceneOutline): SceneOutline {
       : 'Present this topic as a process or structure diagram.',
     widgetOutline,
   };
+}
+
+/**
+ * Outline JSON arrives from an LLM, so its TypeScript cast is not a contract.
+ * A reasoning gate is authoritative host metadata; reject a malformed gate here
+ * instead of allowing the first scene's provider work to discover it later.
+ */
+function reasoningGateOutlineError(outline: SceneOutline): string | null {
+  if (outline.reasoningGate === undefined) return null;
+
+  if (outline.type !== 'quiz') {
+    return 'reasoningGate requires a quiz scene';
+  }
+
+  const quizConfig = outline.quizConfig;
+  if (
+    quizConfig?.questionCount !== 1 ||
+    quizConfig.difficulty !== 'hard' ||
+    quizConfig.questionTypes.length !== 1 ||
+    quizConfig.questionTypes[0] !== 'text'
+  ) {
+    return 'reasoningGate requires quizConfig { questionCount: 1, difficulty: "hard", questionTypes: ["text"] }';
+  }
+
+  try {
+    validateReasoningGate(outline.reasoningGate);
+    return null;
+  } catch (error) {
+    return `reasoningGate must be exactly { rubric: non-empty string, passThreshold: number from 0 to 1 }: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function ensureUniqueOutlineId(outline: SceneOutline, usedIds: Set<string>): SceneOutline {
@@ -515,6 +546,7 @@ export async function POST(req: NextRequest) {
           let languageDirective: string | null = null;
           let courseTitle: string | null = null;
           let lastError: string | undefined;
+          let terminalOutlineError: string | undefined;
 
           for (let attempt = 1; attempt <= MAX_STREAM_RETRIES + 1; attempt++) {
             try {
@@ -579,6 +611,13 @@ export async function POST(req: NextRequest) {
                 );
                 scanFrom = nextScanFrom;
                 for (const outline of newOutlines) {
+                  const gateError = reasoningGateOutlineError(outline);
+                  if (gateError) {
+                    terminalOutlineError = `Invalid outline reasoningGate: ${gateError}`;
+                    log.warn(terminalOutlineError);
+                    break;
+                  }
+
                   // Ensure ID and order
                   const enrichedBase = {
                     ...outline,
@@ -597,6 +636,13 @@ export async function POST(req: NextRequest) {
                   });
                   controller.enqueue(encoder.encode(`data: ${event}\n\n`));
                 }
+
+                if (terminalOutlineError) break;
+              }
+
+              if (terminalOutlineError) {
+                lastError = terminalOutlineError;
+                break;
               }
 
               // Validate: got outlines?
@@ -658,7 +704,7 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          if (parsedOutlines.length > 0) {
+          if (!terminalOutlineError && parsedOutlines.length > 0) {
             // Replace sequential gen_img_N/gen_vid_N with globally unique IDs
             const uniquifiedOutlines = uniquifyMediaElementIds(parsedOutlines);
             // Send done event with all outlines

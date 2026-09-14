@@ -84,6 +84,7 @@ Never return a bare array. Never omit `languageDirective` or `courseTitle`. All 
      "questionTypes": ["single", "multiple"]
    }
    ```
+- **Structured reasoning checkpoints**: Only when the requirement explicitly asks for one, include `reasoningGate` on that quiz using exactly `{ "rubric": "non-empty required reasoning", "passThreshold": 0.8 }`, with `quizConfig` set to one hard `text` question. Do not use `type`, `prompt`, or `requiredReasoningElements` in `reasoningGate`.
 {{#if hasSourceImages}}
 - **If source images are available**, add `suggestedImageIds` to relevant slide scenes. Only use image IDs listed under Available Images.
 {{/if}}

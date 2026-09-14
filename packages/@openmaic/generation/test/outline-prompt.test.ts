@@ -3,6 +3,19 @@ import { describe, expect, test } from 'vitest';
 import { buildOutlinePrompt } from '@openmaic/generation';
 
 describe('buildOutlinePrompt golden output', () => {
+  test('documents the canonical structured reasoning-gate outline contract', () => {
+    const { system, user } = buildOutlinePrompt({
+      requirement: 'Create one structured clinical reasoning gate.',
+    });
+
+    expect(system).toContain('"reasoningGate": {');
+    expect(system).toContain('"rubric": "');
+    expect(system).toContain('"passThreshold": 0.8');
+    expect(system).toContain('"questionTypes": ["text"]');
+    expect(system).toContain('Never use `type`, `prompt`, or `requiredReasoningElements`');
+    expect(user).toContain('reasoningGate');
+  });
+
   test('pins every conditional off', () => {
     expect(
       buildOutlinePrompt(
