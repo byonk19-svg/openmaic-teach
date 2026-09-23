@@ -19,6 +19,7 @@ export interface LearnerBrowserOptions {
   timeoutMs: number;
   requireDraft: boolean;
   submitRestored: boolean;
+  auditAllScenes: boolean;
 }
 
 const DEFAULTS = {
@@ -39,12 +40,11 @@ export function parseLearnerBrowserArgs(args: string[]): LearnerBrowserOptions {
   const options: LearnerBrowserOptions = {
     ...DEFAULTS,
     stageId: '',
-    ...(process.env.OPENMAIC_LEARNER_KEY
-      ? { learnerKey: process.env.OPENMAIC_LEARNER_KEY }
-      : {}),
+    ...(process.env.OPENMAIC_LEARNER_KEY ? { learnerKey: process.env.OPENMAIC_LEARNER_KEY } : {}),
     headless: true,
     requireDraft: false,
     submitRestored: false,
+    auditAllScenes: false,
   };
   for (let index = 0; index < normalizedArgs.length; index += 1) {
     const flag = normalizedArgs[index];
@@ -86,6 +86,9 @@ export function parseLearnerBrowserArgs(args: string[]): LearnerBrowserOptions {
         break;
       case '--help':
         throw new Error('HELP');
+      case '--audit-all-scenes':
+        options.auditAllScenes = true;
+        break;
       default:
         throw new Error(`Unknown option: ${flag}`);
     }
@@ -94,10 +97,7 @@ export function parseLearnerBrowserArgs(args: string[]): LearnerBrowserOptions {
   return options;
 }
 
-export function seedLearnerKey(
-  storage: Pick<Storage, 'setItem'>,
-  learnerKey: string,
-): void {
+export function seedLearnerKey(storage: Pick<Storage, 'setItem'>, learnerKey: string): void {
   storage.setItem(LEARNER_KEY_STORAGE_KEY, JSON.stringify(learnerKey));
 }
 
@@ -138,7 +138,10 @@ async function saveDiagnostics(
   diagnostics: string[],
 ): Promise<void> {
   await mkdir(options.screenshotDir, { recursive: true });
-  await page.screenshot({ path: join(options.screenshotDir, `${options.stageId}.png`), fullPage: true });
+  await page.screenshot({
+    path: join(options.screenshotDir, `${options.stageId}.png`),
+    fullPage: true,
+  });
   await writeFile(
     join(options.screenshotDir, `${options.stageId}.json`),
     JSON.stringify({ url: safeUrl(page.url()), diagnostics: diagnostics.slice(-100) }, null, 2),
@@ -146,11 +149,34 @@ async function saveDiagnostics(
 }
 
 async function waitForQuiz(page: Page, timeoutMs: number): Promise<void> {
-  await page.getByText('Loading classroom...').waitFor({ state: 'hidden', timeout: timeoutMs });
+  await page
+    .getByText(/Loading classroom|正在加载课堂/u)
+    .waitFor({ state: 'hidden', timeout: timeoutMs });
   await page
     .getByRole('button', { name: 'Start Quiz' })
     .or(page.getByPlaceholder('Type your answer here...'))
     .waitFor({ state: 'visible', timeout: timeoutMs });
+}
+
+async function captureAllScenes(
+  page: Page,
+  options: LearnerBrowserOptions,
+  diagnostics: string[],
+): Promise<void> {
+  await page
+    .getByText(/Loading classroom|正在加载课堂/u)
+    .waitFor({ state: 'hidden', timeout: options.timeoutMs });
+  await mkdir(options.screenshotDir, { recursive: true });
+  for (let index = 0; index < 12; index += 1) {
+    const next = page.getByRole('button', { name: 'Next scene' });
+    await page.screenshot({
+      path: join(options.screenshotDir, `${options.stageId}-scene-${index + 1}.png`),
+      fullPage: true,
+    });
+    diagnostics.push(`[audit] captured scene ${index + 1}`);
+    if (await next.isDisabled()) break;
+    await next.click();
+  }
 }
 
 function usage(): string {
@@ -185,7 +211,9 @@ export async function runLearnerBrowser(options: LearnerBrowserOptions): Promise
     });
     page.on('pageerror', (error) => diagnostics.push(`[pageerror] ${error.message.slice(0, 500)}`));
     page.on('requestfailed', (request) =>
-      diagnostics.push(`[requestfailed] ${safeUrl(request.url())} ${request.failure()?.errorText ?? ''}`),
+      diagnostics.push(
+        `[requestfailed] ${safeUrl(request.url())} ${request.failure()?.errorText ?? ''}`,
+      ),
     );
     page.on('response', (response) => {
       if (response.status() >= 400 && response.url().startsWith(options.baseURL)) {
@@ -197,6 +225,12 @@ export async function runLearnerBrowser(options: LearnerBrowserOptions): Promise
       waitUntil: 'domcontentloaded',
       timeout: options.timeoutMs,
     });
+    if (options.auditAllScenes) {
+      await captureAllScenes(page, options, diagnostics);
+      await saveDiagnostics(page, options, diagnostics);
+      console.log(JSON.stringify({ stageId: options.stageId, diagnostics }, null, 2));
+      return;
+    }
     await waitForQuiz(page, options.timeoutMs);
     const startQuiz = page.getByRole('button', { name: 'Start Quiz' });
     if (await startQuiz.isVisible()) await startQuiz.click();
@@ -210,7 +244,8 @@ export async function runLearnerBrowser(options: LearnerBrowserOptions): Promise
 
     if (options.submitRestored) {
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes('/api/quiz-grade') && response.request().method() === 'POST',
+        (response) =>
+          response.url().includes('/api/quiz-grade') && response.request().method() === 'POST',
         { timeout: options.timeoutMs },
       );
       await page.getByRole('button', { name: 'Submit Answers' }).click();

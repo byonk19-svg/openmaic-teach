@@ -277,6 +277,12 @@ export function ClassroomSurface({
               : 'h-screen flex flex-col overflow-hidden'
           }
         >
+          <a
+            href="#learner-main-content"
+            className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[200] focus:rounded focus:bg-white focus:px-3 focus:py-2 focus:text-slate-900 focus:shadow"
+          >
+            Skip to lesson content
+          </a>
           {loading || (variant === 'pane' && !error && loadedClassroomId !== classroomId) ? (
             <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
               <div className="flex flex-col items-center gap-3 text-muted-foreground">

@@ -19,8 +19,19 @@ import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('QuizView');
+export const REASONING_CHECKPOINT_GUIDANCE =
+  'Reasoning checkpoint: explain your interpretation, supporting evidence, remaining uncertainty, and relevant next assessment or evidence.';
+export function shortAnswerAccessibleName(question: string) {
+  if (question.includes('CURRENT SUPPORT\nFiO2 0.70')) return 'Case B response';
+  if (question.startsWith('C1: SpO2 94%')) return 'Transfer response';
+  return `Your answer for: ${question}`;
+}
+export function shouldActivateChoiceWithSpace(key: string) {
+  return key === ' ';
+}
 import type { QuizQuestion } from '@/lib/types/stage';
 import { SpeechButton } from '@/components/audio/speech-button';
+import { M02QuizEvidence } from '@/components/scene-renderers/m02-learning-slide';
 import { gradeChoiceQuestions, isShortAnswer, type QuestionResult } from '@/lib/quiz/grading';
 import { renderQuizMathText } from '@/lib/quiz/math-text';
 import {
@@ -107,9 +118,9 @@ async function gradeShortAnswerQuestion(
     const modelConfig = getCurrentModelConfig();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'x-model': modelConfig.modelString,
-      'x-api-key': modelConfig.apiKey,
     };
+    if (modelConfig.modelId) headers['x-model'] = modelConfig.modelString;
+    if (modelConfig.apiKey) headers['x-api-key'] = modelConfig.apiKey;
     if (modelConfig.baseUrl) headers['x-base-url'] = modelConfig.baseUrl;
     if (modelConfig.providerType) headers['x-provider-type'] = modelConfig.providerType;
 
@@ -155,9 +166,9 @@ async function gradeReasoningQuestion(q: QuizQuestion, userAnswer: string): Prom
   const config = getCurrentModelConfig();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-model': config.modelString,
-    'x-api-key': config.apiKey,
   };
+  if (config.modelId) headers['x-model'] = config.modelString;
+  if (config.apiKey) headers['x-api-key'] = config.apiKey;
   if (config.baseUrl) headers['x-base-url'] = config.baseUrl;
   if (config.providerType) headers['x-provider-type'] = config.providerType;
   const response = await fetch('/api/quiz-grade', {
@@ -293,6 +304,12 @@ function SingleChoiceQuestion({
               key={opt.value}
               disabled={disabled}
               onClick={() => !disabled && onChange(opt.value)}
+              onKeyDown={(event) => {
+                if (!disabled && shouldActivateChoiceWithSpace(event.key)) {
+                  event.preventDefault();
+                  onChange(opt.value);
+                }
+              }}
               className={cn(
                 'flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all text-sm',
                 // Default state
@@ -403,6 +420,12 @@ function MultipleChoiceQuestion({
               key={opt.value}
               disabled={disabled}
               onClick={() => toggle(opt.value)}
+              onKeyDown={(event) => {
+                if (shouldActivateChoiceWithSpace(event.key)) {
+                  event.preventDefault();
+                  toggle(opt.value);
+                }
+              }}
               className={cn(
                 'flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all text-sm',
                 !isReview &&
@@ -490,6 +513,7 @@ function ShortAnswerQuestion({
             value={value ?? ''}
             onChange={(e) => onChange(e.target.value)}
             disabled={disabled}
+            aria-label={shortAnswerAccessibleName(question.question)}
             placeholder={t('quiz.inputPlaceholder')}
             className="w-full min-h-[100px] p-3 pb-10 rounded-xl border border-gray-200 dark:border-gray-600 text-sm resize-none focus:outline-none focus:border-violet-300 dark:focus:border-violet-600 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/50 transition-all disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:bg-gray-800/50 dark:text-gray-200 dark:placeholder:text-gray-500"
           />
@@ -557,6 +581,9 @@ function QuestionCard({
   const { t } = useI18n();
   const isReview = !!result;
   const pts = question.points ?? 1;
+  const isM01CaseB = question.id === 'm01-case-b-q';
+  const isM02CaseB = question.id === 'm02-case-b-q';
+  const isM02Transfer = question.id === 'm02-transfer-q';
 
   return (
     <motion.div
@@ -604,7 +631,15 @@ function QuestionCard({
           </span>
           <div>
             <div className="text-sm font-medium text-gray-800 dark:text-gray-100 leading-relaxed">
-              <QuizMathText text={question.question} allowDisplayMode />
+              {isM01CaseB ? (
+                <M01CaseBPrompt text={question.question} />
+              ) : isM02CaseB ? (
+                <M02CaseBPrompt />
+              ) : isM02Transfer ? (
+                <M02TransferPrompt />
+              ) : (
+                <QuizMathText text={question.question} allowDisplayMode />
+              )}
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
               {question.type === 'single'
@@ -612,7 +647,7 @@ function QuestionCard({
                 : question.type === 'multiple'
                   ? t('quiz.multipleChoice')
                   : t('quiz.shortAnswer')}
-              {!question.reasoningGate && (
+              {!question.reasoningGate && !isM02Transfer && (
                 <>
                   {' '}
                   {' · '}
@@ -641,6 +676,52 @@ function QuestionCard({
         </div>
       )}
     </motion.div>
+  );
+}
+
+function M02CaseBPrompt() {
+  return (
+    <p>
+      Respond in three concise parts: <b>1. Name the question.</b> What question does each source
+      help address? <b>2. Integrate.</b> State the strongest supported interpretation without using
+      one as proof of the others. <b>3. Choose one unresolved question.</b> Name one assessment or
+      evidence source that would clarify it, and why.
+    </p>
+  );
+}
+function M02TransferPrompt() {
+  return (
+    <p>
+      Compare C1 and C2 in three short statements: what stayed the same, what changes the
+      oxygenation interpretation, and what still cannot be concluded from these cards?
+    </p>
+  );
+}
+
+function M01CaseBPrompt({ text }: { text: string }) {
+  const [intro = '', b1 = '', b2 = '', tasks = ''] = text.split('\n\n');
+  const withoutHeading = (block: string, heading: string) => block.replace(`${heading}\n`, '');
+  return (
+    <div className="space-y-3">
+      <p>{intro}</p>
+      <section aria-labelledby="m01-b1-heading">
+        <h3 id="m01-b1-heading" className="font-semibold">
+          SNAPSHOT B1
+        </h3>
+        <p>{withoutHeading(b1, 'SNAPSHOT B1')}</p>
+      </section>
+      <section aria-labelledby="m01-b2-heading">
+        <h3 id="m01-b2-heading" className="font-semibold">
+          SNAPSHOT B2
+        </h3>
+        <p>{withoutHeading(b2, 'SNAPSHOT B2')}</p>
+      </section>
+      <ol className="list-decimal space-y-1 pl-5">
+        {tasks.split('\n').map((task) => (
+          <li key={task}>{task.replace(/^\d\.\s*/, '')}</li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -906,6 +987,18 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       }
       return;
     }
+    if (sceneId === 'm02-transfer') {
+      await runQuizPersistenceTransition(
+        () => persistQuizSubmission({ stageId, sceneId, attemptId, answers }, runtimeWriter),
+        viewLifetime,
+        () => {
+          setResults([]);
+          setPhase('reviewing');
+        },
+        () => setRuntimeGate({ status: 'error' }),
+      );
+      return;
+    }
     setPhase('submitting');
     await runQuizPersistenceTransition(
       () => persistQuizSubmission({ stageId, sceneId, attemptId, answers }, runtimeWriter),
@@ -1130,8 +1223,8 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
               {gateRequested && (
                 <p className="text-sm">
-                  Reasoning checkpoint: explain your evidence, mechanism, and specific next step. An
-                  unfinished answer is restored after reload; resubmit to receive fresh feedback.
+                  {REASONING_CHECKPOINT_GUIDANCE} An unfinished answer is restored after reload;
+                  resubmit to receive fresh feedback.
                 </p>
               )}
               {gateFeedback && (
@@ -1142,6 +1235,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
                   )}
                 </div>
               )}
+              <M02QuizEvidence sceneId={sceneId} />
               {questions.map((q, i) => {
                 if (q.type === 'single') {
                   return (
@@ -1244,6 +1338,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
 
             {/* Results */}
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              <M02QuizEvidence sceneId={sceneId} revealed />
               {!gateRequested && (
                 <ScoreBanner score={earnedScore} total={totalPoints} results={results} />
               )}

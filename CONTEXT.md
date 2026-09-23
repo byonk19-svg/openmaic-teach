@@ -20,6 +20,26 @@ _Avoid_: Content flow, quiz loop
 The clinician learner's interpretation of observed, measured, set, calculated, and modeled respiratory information before an intervention or conclusion is revealed.
 _Avoid_: Diagnosis reveal, answer-first teaching
 
+**Supported conclusion**:
+The strongest conclusion the visible evidence actually justifies, stated separately from plausible explanations and unresolved questions.
+_Avoid_: Blanket uncertainty, overclaim
+
+**Breathing experience**:
+The patient's communicated experience of breathing, which is relevant evidence but not a quantified work-of-breathing measurement.
+_Avoid_: Measured effort, comfort score
+
+**Effort-related observation**:
+A visible bedside finding, such as inspiratory neck-muscle recruitment, that warrants assessment without establishing a cause or quantified respiratory-muscle work.
+_Avoid_: Measured work of breathing, proven mechanism
+
+**Gas moved per minute**:
+The calculated exhaled volume per minute for a stated, valid calculation interval; it is not a claim about CO2 clearance or breathing effort.
+_Avoid_: Adequate ventilation, clinical status
+
+**RT-relevant ICU context**:
+An ICU domain outside respiratory therapy's independent specialty practice that is included only when it materially changes respiratory assessment, support, airway safety, escalation, or communication.
+_Avoid_: General ICU orientation, interdisciplinary scope expansion
+
 ## Content quality
 
 **Evidence traceability**:
@@ -34,10 +54,18 @@ _Avoid_: AI-approved content, medically certified content
 AI-authored learning material that may support exploration or authoring but has not yet earned the clinical-ready label.
 _Avoid_: Final content, validated content
 
+**Source record**:
+A versioned claim-level record that connects a clinically consequential instructional assertion and every dependent asset to its applicable source, limitations, derivation, and review state.
+_Avoid_: Module-level bibliography, citation-only approval
+
+**Qualified RT review**:
+Named review by a credentialed respiratory therapist with relevant adult acute/ICU experience, performed for a specific content version before that content is labeled clinical-ready.
+_Avoid_: Unattributed SME approval, AI approval
+
 ## Learning state
 
 **Reasoning checkpoint**:
-A learner response point that requires case-specific interpretation, mechanism, and next-step reasoning before its explanation is unlocked.
+A learner response point that requires case-specific interpretation and the evidence appropriate to that objective before its explanation is unlocked. Depending on the task, this may include mechanism, uncertainty, next assessment, reassessment, or coordination.
 _Avoid_: Trivia quiz, acknowledgement gate
 
 **Generation completion**:
