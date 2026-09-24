@@ -72,9 +72,20 @@ next-env.d.ts
 # generated data
 /data
 /logs
+/output/
+/.scratch/
 
 # docs
 /docs
+!/docs/
+/docs/*
+!/docs/adr/
+/docs/adr/*
+!/docs/adr/0004-us-clinician-content-evidence-baseline.md
+!/docs/clinical-content/
+!/docs/clinical-content/**
+!/docs/rt-foundations/
+!/docs/rt-foundations/**
 # Eval results
 eval/whiteboard-layout/results/
 eval/outline-language/results/

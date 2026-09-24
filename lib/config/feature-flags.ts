@@ -24,6 +24,21 @@ export function isAgentRuntimeConfigured(): boolean {
   return isAgentRuntimeEnabled() && Boolean(process.env.DATABASE_URL?.trim());
 }
 
+/** Server-authoritative clinical review capability. Default OFF: disabled startup skips review DDL. */
+export function isClinicalReviewEnabled(): boolean {
+  return readBoolean(process.env.OPENMAIC_ENABLE_CLINICAL_REVIEW);
+}
+
+/** Public display affordance only; it cannot enable the server capability. */
+export function shouldShowClinicalReviewUi(): boolean {
+  return readBoolean(process.env.NEXT_PUBLIC_ENABLE_CLINICAL_REVIEW);
+}
+
+/** Clinical-review decisions are authoring actions, never learner-playback controls. */
+export function shouldRenderClinicalReviewControls(mode: string | undefined): boolean {
+  return mode === 'edit' && shouldShowClinicalReviewUi();
+}
+
 /**
  * Build-time workbench affordance. This public flag is separate from the
  * server runtime gate because Next.js inlines NEXT_PUBLIC values into client

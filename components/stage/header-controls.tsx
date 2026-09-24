@@ -22,12 +22,16 @@ import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useExportClassroom } from '@/lib/export/use-export-classroom';
 import { isScriptExportReady, useExportScript } from '@/lib/export/use-export-script';
-import { isVideoExportEnabled } from '@/lib/config/feature-flags';
+import {
+  isVideoExportEnabled,
+  shouldRenderClinicalReviewControls,
+} from '@/lib/config/feature-flags';
 import { useVideoRenderStore } from '@/lib/store/video-render';
 import { CircularProgress } from '@/components/ui/circular-progress';
 import { VideoExportDialog } from './video-export-dialog';
 import { LanguageSwitcher } from '../language-switcher';
 import { SettingsDialog } from '../settings';
+import { ClinicalReviewStatus } from './clinical-review-status';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -112,6 +116,7 @@ export function HeaderControls({
 
   const compact = variant === 'compact';
   const proChecked = proModeActive ?? mode === 'edit';
+  const showClinicalReview = shouldRenderClinicalReviewControls(mode);
 
   if (!showGlobalControls && !showCourseActions) {
     return onToggleEditMode ? (
@@ -138,6 +143,7 @@ export function HeaderControls({
   // anchors identically too.
   return (
     <div className="flex items-center gap-4">
+      {showClinicalReview && <ClinicalReviewStatus />}
       <div
         className={cn(
           'shrink-0 flex items-center gap-1 backdrop-blur-md shadow-sm rounded-full',

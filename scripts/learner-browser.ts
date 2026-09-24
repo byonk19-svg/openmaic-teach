@@ -39,9 +39,7 @@ export function parseLearnerBrowserArgs(args: string[]): LearnerBrowserOptions {
   const options: LearnerBrowserOptions = {
     ...DEFAULTS,
     stageId: '',
-    ...(process.env.OPENMAIC_LEARNER_KEY
-      ? { learnerKey: process.env.OPENMAIC_LEARNER_KEY }
-      : {}),
+    ...(process.env.OPENMAIC_LEARNER_KEY ? { learnerKey: process.env.OPENMAIC_LEARNER_KEY } : {}),
     headless: true,
     requireDraft: false,
     submitRestored: false,
@@ -94,10 +92,7 @@ export function parseLearnerBrowserArgs(args: string[]): LearnerBrowserOptions {
   return options;
 }
 
-export function seedLearnerKey(
-  storage: Pick<Storage, 'setItem'>,
-  learnerKey: string,
-): void {
+export function seedLearnerKey(storage: Pick<Storage, 'setItem'>, learnerKey: string): void {
   storage.setItem(LEARNER_KEY_STORAGE_KEY, JSON.stringify(learnerKey));
 }
 
@@ -138,7 +133,10 @@ async function saveDiagnostics(
   diagnostics: string[],
 ): Promise<void> {
   await mkdir(options.screenshotDir, { recursive: true });
-  await page.screenshot({ path: join(options.screenshotDir, `${options.stageId}.png`), fullPage: true });
+  await page.screenshot({
+    path: join(options.screenshotDir, `${options.stageId}.png`),
+    fullPage: true,
+  });
   await writeFile(
     join(options.screenshotDir, `${options.stageId}.json`),
     JSON.stringify({ url: safeUrl(page.url()), diagnostics: diagnostics.slice(-100) }, null, 2),
@@ -146,7 +144,9 @@ async function saveDiagnostics(
 }
 
 async function waitForQuiz(page: Page, timeoutMs: number): Promise<void> {
-  await page.getByText('Loading classroom...').waitFor({ state: 'hidden', timeout: timeoutMs });
+  await page
+    .getByText(/Loading classroom|正在加载课堂/u)
+    .waitFor({ state: 'hidden', timeout: timeoutMs });
   await page
     .getByRole('button', { name: 'Start Quiz' })
     .or(page.getByPlaceholder('Type your answer here...'))
@@ -185,7 +185,9 @@ export async function runLearnerBrowser(options: LearnerBrowserOptions): Promise
     });
     page.on('pageerror', (error) => diagnostics.push(`[pageerror] ${error.message.slice(0, 500)}`));
     page.on('requestfailed', (request) =>
-      diagnostics.push(`[requestfailed] ${safeUrl(request.url())} ${request.failure()?.errorText ?? ''}`),
+      diagnostics.push(
+        `[requestfailed] ${safeUrl(request.url())} ${request.failure()?.errorText ?? ''}`,
+      ),
     );
     page.on('response', (response) => {
       if (response.status() >= 400 && response.url().startsWith(options.baseURL)) {
@@ -210,7 +212,8 @@ export async function runLearnerBrowser(options: LearnerBrowserOptions): Promise
 
     if (options.submitRestored) {
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes('/api/quiz-grade') && response.request().method() === 'POST',
+        (response) =>
+          response.url().includes('/api/quiz-grade') && response.request().method() === 'POST',
         { timeout: options.timeoutMs },
       );
       await page.getByRole('button', { name: 'Submit Answers' }).click();

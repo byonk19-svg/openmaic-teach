@@ -11,6 +11,8 @@ import { validateAppScene, validateAppStage } from '@/lib/document-store/validat
 import { lazyAssetByteStore } from '@/lib/persistence/asset-byte-store';
 import { ensureOwnerMaterialSchema } from '@/lib/persistence/owner-materials';
 import { ensureStageMetaSchema } from '@/lib/persistence/stage-meta';
+import { ensureClinicalReviewSchema } from '@/lib/persistence/clinical-reviews';
+import { isClinicalReviewEnabled } from '@/lib/config/feature-flags';
 import { APP_RUNTIME_PAYLOAD_VALIDATORS } from '@/lib/runtime/payload-validators';
 
 export type PersistencePoolFactory = (connectionString: string) => Pool;
@@ -43,6 +45,7 @@ async function createServerPersistenceProvider(
     await ensureSchema(queryable);
     await ensureDocumentSchema(queryable);
     await ensureStageMetaSchema(queryable);
+    if (isClinicalReviewEnabled()) await ensureClinicalReviewSchema(queryable);
     await ensureOwnerMaterialSchema(queryable);
     await ensureAssetSchema(queryable);
     const withTransaction = nodePostgresTransaction(queryable);

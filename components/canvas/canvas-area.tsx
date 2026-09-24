@@ -99,7 +99,9 @@ export function CanvasArea({
   return (
     <div className="w-full h-full flex flex-col bg-gray-50 dark:bg-gray-900 group/canvas">
       {/* Slide area — takes remaining space */}
-      <div
+      <main
+        id="learner-main-content"
+        tabIndex={-1}
         className={cn(
           'flex-1 min-h-0 relative overflow-hidden flex items-center justify-center p-2 transition-colors duration-500',
           currentScene?.type === 'interactive'
@@ -268,7 +270,7 @@ export function CanvasArea({
             )}
           </AnimatePresence>
         </StageViewport>
-      </div>
+      </main>
 
       {/* ── Canvas Toolbar — in document flow, only when not merged into roundtable ── */}
       {!hideToolbar && (
