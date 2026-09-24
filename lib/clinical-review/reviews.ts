@@ -5,7 +5,10 @@ import type {
 } from './manifest';
 
 export interface ClinicalReviewSubmission {
+  reviewerName: string;
   credential: string;
+  jurisdiction: string;
+  relevantRoleOrExperience: string;
   attestedHumanReview: boolean;
   manifestFingerprint: string;
   decision?: 'approved' | 'changes_requested' | 'revoked';
@@ -13,11 +16,21 @@ export interface ClinicalReviewSubmission {
   expiresAt?: string;
 }
 
+function requireText(value: unknown, message: string): void {
+  if (typeof value !== 'string' || value.trim() === '') throw new Error(message);
+}
+
 export function validateClinicalReviewSubmission(
   input: ClinicalReviewSubmission,
   manifest: ClinicalReviewManifest,
 ): void {
-  if (input.credential.trim() === '') throw new Error('A self-attested credential is required.');
+  requireText(input.reviewerName, 'Reviewer name is required.');
+  requireText(input.credential, 'A self-attested credential is required.');
+  requireText(input.jurisdiction, 'Reviewer jurisdiction is required.');
+  requireText(
+    input.relevantRoleOrExperience,
+    'Relevant adult acute/ICU role or experience is required.',
+  );
   if (input.attestedHumanReview !== true) throw new Error('Human review attestation is required.');
   if (input.manifestFingerprint !== manifest.fingerprint) {
     throw new Error('The reviewed material changed; reload before submitting a decision.');
@@ -41,7 +54,10 @@ export function createClinicalReviewDecision(input: {
     stageId: input.binding.stageId,
     moduleId: input.binding.moduleId,
     reviewerOwnerId: input.reviewerOwnerId,
+    reviewerName: input.input.reviewerName.trim(),
     credential: input.input.credential.trim(),
+    jurisdiction: input.input.jurisdiction.trim(),
+    relevantRoleOrExperience: input.input.relevantRoleOrExperience.trim(),
     attestedHumanReview: true,
     decision: input.input.decision ?? 'approved',
     reviewedAt: input.now,

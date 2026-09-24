@@ -34,6 +34,11 @@ export function shouldShowClinicalReviewUi(): boolean {
   return readBoolean(process.env.NEXT_PUBLIC_ENABLE_CLINICAL_REVIEW);
 }
 
+/** Clinical-review decisions are authoring actions, never learner-playback controls. */
+export function shouldRenderClinicalReviewControls(mode: string | undefined): boolean {
+  return mode === 'edit' && shouldShowClinicalReviewUi();
+}
+
 /**
  * Build-time workbench affordance. This public flag is separate from the
  * server runtime gate because Next.js inlines NEXT_PUBLIC values into client

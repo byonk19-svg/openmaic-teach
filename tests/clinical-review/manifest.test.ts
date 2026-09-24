@@ -46,7 +46,10 @@ function approved(fingerprint: string): ClinicalReviewDecision {
     stageId: binding.stageId,
     moduleId: binding.moduleId,
     reviewerOwnerId: 'owner-1',
+    reviewerName: 'Brianna Yonkin',
     credential: 'RRT',
+    jurisdiction: 'Texas',
+    relevantRoleOrExperience: 'Practicing adult acute/ICU respiratory therapist',
     attestedHumanReview: true,
     decision: 'approved',
     reviewedAt: '2026-09-14T12:00:00.000Z',
@@ -161,6 +164,13 @@ describe('clinical review manifest', () => {
         binding,
         manifest,
         decisions: [{ ...approved(manifest.fingerprint), attestedHumanReview: false }],
+      }).label,
+    ).toBe('Re-review required');
+    expect(
+      clinicalReviewStatus({
+        binding,
+        manifest,
+        decisions: [{ ...approved(manifest.fingerprint), reviewerName: '' }],
       }).label,
     ).toBe('Re-review required');
     expect(

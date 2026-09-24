@@ -34,7 +34,10 @@ export interface ClinicalReviewDecision {
   stageId: string;
   moduleId: string;
   reviewerOwnerId: string;
+  reviewerName: string;
   credential: string;
+  jurisdiction: string;
+  relevantRoleOrExperience: string;
   attestedHumanReview: boolean;
   decision: ClinicalReviewDecisionKind;
   reviewedAt: string;
@@ -154,7 +157,10 @@ export function clinicalReviewStatus(input: {
   const current =
     latestDecision.decision === 'approved' &&
     latestDecision.attestedHumanReview &&
+    latestDecision.reviewerName.trim() !== '' &&
     latestDecision.credential.trim() !== '' &&
+    latestDecision.jurisdiction.trim() !== '' &&
+    latestDecision.relevantRoleOrExperience.trim() !== '' &&
     latestDecision.revokedAt === undefined &&
     (latestDecision.expiresAt === undefined || latestDecision.expiresAt > now) &&
     latestDecision.manifestFingerprint === input.manifest.fingerprint;

@@ -103,3 +103,31 @@
 - Assessment boundary: Case B, its first assembled exposure, prompt, rubric, and feedback priorities remain unchanged. The candidate post-response mechanism prompt remains deferred and unimplemented.
 - Approved for clinical-ready label: **no**. Rendered fidelity, learner usefulness, accessibility behavior, full-module completeness, and release remain separate.
 - Re-review trigger: any substantive change to the approved physiological relationships, model conditions, expected reasoning, feedback meaning, Case A facts, Case B boundary, source applicability, or treatment/setting boundary.
+
+## Standalone-prototype implementation disposition — 2026-09-23
+
+> This records the owner's later learner-experience decision after review of the
+> targeted-correction desktop and narrow renders. It is implementation authority
+> for the bounded standalone prototype, not a new clinical-ready, release, or
+> efficacy decision, and it does not alter the approved physiology or case/model
+> values above.
+
+- Preserve the current assumption-first paired-breath flow and its current
+  learner-paced reveal organization. Do not restore the earlier draft's
+  missing-assumption answer path.
+- Keep the tautological breathing-experience choice removed. In this prototype,
+  breathing experience is taught through the progressively disclosed feedback
+  model and the worked return to Teaching Case A; the historical candidate choice
+  is not a required interaction.
+- Preserve the segmented oxygen and effort explanations and the current connected
+  Teaching Case A synthesis. The historical authoring draft remains useful source
+  and design history, but it is not a requirement to reproduce every candidate
+  node or interaction in the bounded prototype.
+- Case B, C1/C2 transfer, persisted-stage construction, and semantic grading remain
+  outside the standalone-prototype implementation. Their reviewed source material
+  is preserved for separately authorized future module work.
+
+The implementation was reviewed as a coherent learner experience after the
+targeted correction pass. Future audits of `/m02-prototype` should compare against
+this disposition plus the approved clinical relationships, rather than treating
+superseded candidate interactions as missing defects.

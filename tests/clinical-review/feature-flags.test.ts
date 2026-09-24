@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isClinicalReviewEnabled, shouldShowClinicalReviewUi } from '@/lib/config/feature-flags';
+import {
+  isClinicalReviewEnabled,
+  shouldRenderClinicalReviewControls,
+  shouldShowClinicalReviewUi,
+} from '@/lib/config/feature-flags';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -17,5 +21,11 @@ describe('clinical review containment flags', () => {
     vi.stubEnv('NEXT_PUBLIC_ENABLE_CLINICAL_REVIEW', 'true');
     expect(isClinicalReviewEnabled()).toBe(false);
     expect(shouldShowClinicalReviewUi()).toBe(true);
+  });
+
+  it('shows clinical-review controls only in the authoring surface', () => {
+    vi.stubEnv('NEXT_PUBLIC_ENABLE_CLINICAL_REVIEW', 'true');
+    expect(shouldRenderClinicalReviewControls('present')).toBe(false);
+    expect(shouldRenderClinicalReviewControls('edit')).toBe(true);
   });
 });

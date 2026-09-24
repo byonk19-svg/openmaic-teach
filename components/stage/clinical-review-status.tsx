@@ -19,7 +19,10 @@ export function ClinicalReviewStatus() {
   const enabled = shouldShowClinicalReviewUi();
   const stageId = useStageStore((state) => state.stage?.id);
   const [review, setReview] = useState<ReviewRead | null>(null);
+  const [reviewerName, setReviewerName] = useState('');
   const [credential, setCredential] = useState('');
+  const [jurisdiction, setJurisdiction] = useState('');
+  const [relevantRoleOrExperience, setRelevantRoleOrExperience] = useState('');
   const [attested, setAttested] = useState(false);
   const [decision, setDecision] = useState<'approved' | 'changes_requested'>('approved');
   const [message, setMessage] = useState<string | null>(null);
@@ -56,7 +59,10 @@ export function ClinicalReviewStatus() {
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        reviewerName,
         credential,
+        jurisdiction,
+        relevantRoleOrExperience,
         attestedHumanReview: attested,
         manifestFingerprint: review.manifestFingerprint,
         decision,
@@ -67,7 +73,10 @@ export function ClinicalReviewStatus() {
       setMessage(body?.error ?? 'Review action could not be recorded.');
       return;
     }
+    setReviewerName('');
     setCredential('');
+    setJurisdiction('');
+    setRelevantRoleOrExperience('');
     setAttested(false);
     setMessage(null);
     await refresh();
@@ -105,11 +114,37 @@ export function ClinicalReviewStatus() {
         {review.manifestFingerprint && (
           <>
             <label className="block">
+              Reviewer name
+              <input
+                value={reviewerName}
+                onChange={(event) => setReviewerName(event.target.value)}
+                className="mt-1 w-full rounded border bg-background p-1"
+                autoComplete="name"
+              />
+            </label>
+            <label className="block">
               Self-attested RT credential
               <input
                 value={credential}
                 onChange={(event) => setCredential(event.target.value)}
                 className="mt-1 w-full rounded border bg-background p-1"
+              />
+            </label>
+            <label className="block">
+              Credential jurisdiction
+              <input
+                value={jurisdiction}
+                onChange={(event) => setJurisdiction(event.target.value)}
+                className="mt-1 w-full rounded border bg-background p-1"
+                placeholder="State, province, or country"
+              />
+            </label>
+            <label className="block">
+              Relevant adult acute/ICU role or experience
+              <textarea
+                value={relevantRoleOrExperience}
+                onChange={(event) => setRelevantRoleOrExperience(event.target.value)}
+                className="mt-1 min-h-16 w-full rounded border bg-background p-1"
               />
             </label>
             <label className="block">

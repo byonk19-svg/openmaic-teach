@@ -29,6 +29,10 @@ import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
 export const runtime = 'nodejs';
 type Params = { params: Promise<{ id: string }> };
 
+function statusForAuthor(status: ReturnType<typeof clinicalReviewStatus>) {
+  return { label: status.label, current: status.current, reason: status.reason };
+}
+
 function disabledResponse() {
   return NextResponse.json({ error: 'clinical_review_disabled' }, { status: 404 });
 }
@@ -81,7 +85,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     // Credentials and reviewer identity stay server-side; authors receive only decision timing/scope/status.
     return ownerJson(
       {
-        status,
+        status: statusForAuthor(status),
         manifestFingerprint: manifest?.fingerprint ?? null,
         binding: binding
           ? {
@@ -158,7 +162,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       });
       await appendClinicalReviewDecision(db, decision);
       return ownerJson(
-        { ok: true, status: clinicalReviewStatus({ binding, manifest, decisions: [decision] }) },
+        {
+          ok: true,
+          status: statusForAuthor(
+            clinicalReviewStatus({ binding, manifest, decisions: [decision] }),
+          ),
+        },
         201,
         headers,
       );

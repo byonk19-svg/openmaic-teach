@@ -6,6 +6,8 @@
 
 > **Approved bounded addition:** Brianna's qualified-RT approval was recorded on 2026-09-22 for the exact demand/effort, CO2-application, and assessment-alignment section below, including the actual-assistance and feedback-loop clarifications. This approval authorizes that section's limited-prototype implementation; it does not approve the surrounding historical authoring file, Case B changes, the complete M02 module, clinical-ready status, release, or educational effectiveness.
 
+> **Current standalone-prototype disposition:** The later 2026-09-23 rendered-experience review is recorded in the [M02 qualified-RT review decision](M02-qualified-rt-review-decision.md#standalone-prototype-implementation-disposition--2026-09-23). For `/m02-prototype`, that decision preserves the current assumption-first flow, segmented oxygen/effort teaching, and worked Case A synthesis while leaving the historical breathing-experience choice unimplemented. The candidate material below remains source/review history; it is not authority to restore Case B, transfer, grading, or every superseded interaction to the bounded prototype.
+
 ## 1. Identity, authority, and authoring constraints
 
 | Field | Value |

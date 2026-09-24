@@ -6,7 +6,6 @@ import { SlideEditor as SlideRenderer } from '../slide-renderer/Editor';
 import { QuizView } from '../scene-renderers/quiz-view';
 import { InteractiveRenderer } from '../scene-renderers/interactive-renderer';
 import { PBLRenderer } from '../scene-renderers/pbl-renderer';
-import { M02LearningSlide } from '../scene-renderers/m02-learning-slide';
 
 interface SceneRendererProps {
   readonly scene: Scene;
@@ -23,18 +22,6 @@ export function SceneRenderer({ scene, mode }: SceneRendererProps) {
     switch (scene.type) {
       case 'slide':
         if (scene.content.type !== 'slide') return <div>Invalid slide content</div>;
-        if (
-          [
-            'm02-orient',
-            'm02-pathways',
-            'm02-paired-breaths',
-            'm02-output-burden',
-            'm02-synthesis',
-          ].includes(scene.id)
-        )
-          return <M02LearningSlide sceneId={scene.id} />;
-        if (scene.id.startsWith('m02-'))
-          return <div role="alert">Unsupported M02 slide scene: {scene.id}</div>;
         if (scene.id === 'm01-model') {
           return (
             <>

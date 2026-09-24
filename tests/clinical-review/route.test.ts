@@ -50,7 +50,10 @@ function request(fingerprint: string, extra: Record<string, unknown> = {}) {
   return new NextRequest('http://localhost/api/stages/stage-1/clinical-review', {
     method: 'POST',
     body: JSON.stringify({
+      reviewerName: 'Brianna Yonkin',
       credential: 'RRT',
+      jurisdiction: 'Texas',
+      relevantRoleOrExperience: 'Practicing adult acute/ICU respiratory therapist',
       attestedHumanReview: true,
       manifestFingerprint: fingerprint,
       reviewerOwnerId: 'forged-owner',
@@ -111,6 +114,7 @@ describe('clinical-review route', () => {
       buildClinicalReviewManifest(mocks.document, binding).fingerprint,
     );
     expect(body.binding).toMatchObject({ moduleId: 'adult-icu-rt-foundations-01' });
+    expect(body.status).not.toHaveProperty('latestDecision');
   });
 
   it('rejects a stale review and derives reviewer identity from the session', async () => {
@@ -118,7 +122,14 @@ describe('clinical-review route', () => {
     expect((await POST(request('sha256:stale'), params)).status).toBe(409);
     const response = await POST(request(manifest.fingerprint), params);
     expect(response.status).toBe(201);
-    expect(mocks.append.mock.calls[0]![1]).toMatchObject({ reviewerOwnerId: 'owner-1' });
+    expect(mocks.append.mock.calls[0]![1]).toMatchObject({
+      reviewerOwnerId: 'owner-1',
+      reviewerName: 'Brianna Yonkin',
+      credential: 'RRT',
+      jurisdiction: 'Texas',
+      relevantRoleOrExperience: 'Practicing adult acute/ICU respiratory therapist',
+      manifestFingerprint: manifest.fingerprint,
+    });
     expect(mocks.append.mock.calls[0]![1]).not.toHaveProperty('reviewerOwnerId', 'forged-owner');
   });
 });

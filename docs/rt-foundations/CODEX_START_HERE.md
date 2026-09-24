@@ -11,6 +11,14 @@ Before editing, inspect applicable repository instructions and relevant current 
 
 ## 2. Short AGENTS.md addition
 
+> **Adoption status (2026-09-23):** The repository-root `AGENTS.md` has since been
+> reconciled through an explicitly authorized instruction task and is the current
+> project-owned authority. The compact block below is retained as historical
+> bootstrap guidance for a repository that has not adopted the RT instructions;
+> it must not be used to replace, truncate, or mask the current root file. Future
+> reconciliation keeps the maintained detail in `docs/rt-foundations/` and the
+> single task-based `SKILL_ROUTING.md` requirement in the root instructions.
+
 During an explicitly authorized docs integration task, merge the following short section into the appropriate existing repository-level instruction file. Do not replace it, create an override that masks it, or duplicate an equivalent section. The paths below assume this pack is installed at the recommended location.
 
 ```markdown

@@ -22,8 +22,6 @@ const log = createLogger('QuizView');
 export const REASONING_CHECKPOINT_GUIDANCE =
   'Reasoning checkpoint: explain your interpretation, supporting evidence, remaining uncertainty, and relevant next assessment or evidence.';
 export function shortAnswerAccessibleName(question: string) {
-  if (question.includes('CURRENT SUPPORT\nFiO2 0.70')) return 'Case B response';
-  if (question.startsWith('C1: SpO2 94%')) return 'Transfer response';
   return `Your answer for: ${question}`;
 }
 export function shouldActivateChoiceWithSpace(key: string) {
@@ -31,7 +29,6 @@ export function shouldActivateChoiceWithSpace(key: string) {
 }
 import type { QuizQuestion } from '@/lib/types/stage';
 import { SpeechButton } from '@/components/audio/speech-button';
-import { M02QuizEvidence } from '@/components/scene-renderers/m02-learning-slide';
 import { gradeChoiceQuestions, isShortAnswer, type QuestionResult } from '@/lib/quiz/grading';
 import { renderQuizMathText } from '@/lib/quiz/math-text';
 import {
@@ -582,8 +579,6 @@ function QuestionCard({
   const isReview = !!result;
   const pts = question.points ?? 1;
   const isM01CaseB = question.id === 'm01-case-b-q';
-  const isM02CaseB = question.id === 'm02-case-b-q';
-  const isM02Transfer = question.id === 'm02-transfer-q';
 
   return (
     <motion.div
@@ -633,10 +628,6 @@ function QuestionCard({
             <div className="text-sm font-medium text-gray-800 dark:text-gray-100 leading-relaxed">
               {isM01CaseB ? (
                 <M01CaseBPrompt text={question.question} />
-              ) : isM02CaseB ? (
-                <M02CaseBPrompt />
-              ) : isM02Transfer ? (
-                <M02TransferPrompt />
               ) : (
                 <QuizMathText text={question.question} allowDisplayMode />
               )}
@@ -647,7 +638,7 @@ function QuestionCard({
                 : question.type === 'multiple'
                   ? t('quiz.multipleChoice')
                   : t('quiz.shortAnswer')}
-              {!question.reasoningGate && !isM02Transfer && (
+              {!question.reasoningGate && (
                 <>
                   {' '}
                   {' · '}
@@ -676,25 +667,6 @@ function QuestionCard({
         </div>
       )}
     </motion.div>
-  );
-}
-
-function M02CaseBPrompt() {
-  return (
-    <p>
-      Respond in three concise parts: <b>1. Name the question.</b> What question does each source
-      help address? <b>2. Integrate.</b> State the strongest supported interpretation without using
-      one as proof of the others. <b>3. Choose one unresolved question.</b> Name one assessment or
-      evidence source that would clarify it, and why.
-    </p>
-  );
-}
-function M02TransferPrompt() {
-  return (
-    <p>
-      Compare C1 and C2 in three short statements: what stayed the same, what changes the
-      oxygenation interpretation, and what still cannot be concluded from these cards?
-    </p>
   );
 }
 
@@ -987,18 +959,6 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       }
       return;
     }
-    if (sceneId === 'm02-transfer') {
-      await runQuizPersistenceTransition(
-        () => persistQuizSubmission({ stageId, sceneId, attemptId, answers }, runtimeWriter),
-        viewLifetime,
-        () => {
-          setResults([]);
-          setPhase('reviewing');
-        },
-        () => setRuntimeGate({ status: 'error' }),
-      );
-      return;
-    }
     setPhase('submitting');
     await runQuizPersistenceTransition(
       () => persistQuizSubmission({ stageId, sceneId, attemptId, answers }, runtimeWriter),
@@ -1235,7 +1195,6 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
                   )}
                 </div>
               )}
-              <M02QuizEvidence sceneId={sceneId} />
               {questions.map((q, i) => {
                 if (q.type === 'single') {
                   return (
@@ -1338,7 +1297,6 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
 
             {/* Results */}
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              <M02QuizEvidence sceneId={sceneId} revealed />
               {!gateRequested && (
                 <ScoreBanner score={earnedScore} total={totalPoints} results={results} />
               )}

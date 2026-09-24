@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS clinical_review_decisions (
   stage_id TEXT NOT NULL REFERENCES document_stages(id) ON DELETE CASCADE,
   module_id TEXT NOT NULL,
   reviewer_owner_id TEXT NOT NULL,
+  reviewer_name TEXT,
   credential TEXT NOT NULL,
+  jurisdiction TEXT,
+  relevant_role_or_experience TEXT,
   attested_human_review BOOLEAN NOT NULL,
   decision TEXT NOT NULL,
   reviewed_at TIMESTAMPTZ NOT NULL,
@@ -27,6 +30,12 @@ CREATE TABLE IF NOT EXISTS clinical_review_decisions (
   expires_at TIMESTAMPTZ,
   revoked_at TIMESTAMPTZ
 );
+ALTER TABLE clinical_review_decisions
+  ADD COLUMN IF NOT EXISTS reviewer_name TEXT;
+ALTER TABLE clinical_review_decisions
+  ADD COLUMN IF NOT EXISTS jurisdiction TEXT;
+ALTER TABLE clinical_review_decisions
+  ADD COLUMN IF NOT EXISTS relevant_role_or_experience TEXT;
 CREATE INDEX IF NOT EXISTS clinical_review_decisions_stage_idx
   ON clinical_review_decisions (stage_id, reviewed_at DESC);
 `;
@@ -57,7 +66,11 @@ function asDecision(row: Record<string, unknown>): ClinicalReviewDecision {
     stageId: String(row.stage_id),
     moduleId: String(row.module_id),
     reviewerOwnerId: String(row.reviewer_owner_id),
+    reviewerName: typeof row.reviewer_name === 'string' ? row.reviewer_name : '',
     credential: String(row.credential),
+    jurisdiction: typeof row.jurisdiction === 'string' ? row.jurisdiction : '',
+    relevantRoleOrExperience:
+      typeof row.relevant_role_or_experience === 'string' ? row.relevant_role_or_experience : '',
     attestedHumanReview: row.attested_human_review === true,
     decision: row.decision as ClinicalReviewDecision['decision'],
     reviewedAt: new Date(String(row.reviewed_at)).toISOString(),
@@ -79,7 +92,7 @@ export async function readClinicalReviewBinding(queryable: Queryable, stageId: s
 
 export async function listClinicalReviewDecisions(queryable: Queryable, stageId: string) {
   const result = await queryable.query<Record<string, unknown>>(
-    'SELECT id, stage_id, module_id, reviewer_owner_id, credential, attested_human_review, decision, reviewed_at, manifest_fingerprint, manifest, notes, expires_at, revoked_at FROM clinical_review_decisions WHERE stage_id = $1 ORDER BY reviewed_at DESC',
+    'SELECT id, stage_id, module_id, reviewer_owner_id, reviewer_name, credential, jurisdiction, relevant_role_or_experience, attested_human_review, decision, reviewed_at, manifest_fingerprint, manifest, notes, expires_at, revoked_at FROM clinical_review_decisions WHERE stage_id = $1 ORDER BY reviewed_at DESC',
     [stageId],
   );
   return result.rows.map(asDecision);
@@ -110,14 +123,17 @@ export async function appendClinicalReviewDecision(
   decision: ClinicalReviewDecision,
 ) {
   await queryable.query(
-    `INSERT INTO clinical_review_decisions (id, stage_id, module_id, reviewer_owner_id, credential, attested_human_review, decision, reviewed_at, manifest_fingerprint, manifest, notes, expires_at, revoked_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, $10::jsonb, $11, $12::timestamptz, $13::timestamptz)`,
+    `INSERT INTO clinical_review_decisions (id, stage_id, module_id, reviewer_owner_id, reviewer_name, credential, jurisdiction, relevant_role_or_experience, attested_human_review, decision, reviewed_at, manifest_fingerprint, manifest, notes, expires_at, revoked_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::timestamptz, $12, $13::jsonb, $14, $15::timestamptz, $16::timestamptz)`,
     [
       decision.id,
       decision.stageId,
       decision.moduleId,
       decision.reviewerOwnerId,
+      decision.reviewerName,
       decision.credential,
+      decision.jurisdiction,
+      decision.relevantRoleOrExperience,
       decision.attestedHumanReview,
       decision.decision,
       decision.reviewedAt,

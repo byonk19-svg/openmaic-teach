@@ -20,30 +20,68 @@ const document = {
   scenes: [{ id: 'scene-1', content: { type: 'quiz' } }],
 };
 
+const validSubmission = {
+  reviewerName: 'Brianna Yonkin',
+  credential: 'RRT',
+  jurisdiction: 'Texas',
+  relevantRoleOrExperience: 'Practicing adult acute/ICU respiratory therapist',
+  attestedHumanReview: true,
+};
+
 describe('clinical review submissions', () => {
-  it('rejects absent human attestation, credential, forged owner, and stale fingerprints', () => {
+  it('requires reviewer identity, qualification context, attestation, and the exact fingerprint', () => {
     const manifest = buildClinicalReviewManifest(document, binding);
     for (const input of [
-      { credential: 'RRT', attestedHumanReview: false, manifestFingerprint: manifest.fingerprint },
-      { credential: ' ', attestedHumanReview: true, manifestFingerprint: manifest.fingerprint },
-      { credential: 'RRT', attestedHumanReview: true, manifestFingerprint: 'sha256:stale' },
+      { ...validSubmission, reviewerName: ' ', manifestFingerprint: manifest.fingerprint },
+      { ...validSubmission, credential: ' ', manifestFingerprint: manifest.fingerprint },
+      { ...validSubmission, jurisdiction: ' ', manifestFingerprint: manifest.fingerprint },
+      {
+        ...validSubmission,
+        relevantRoleOrExperience: ' ',
+        manifestFingerprint: manifest.fingerprint,
+      },
+      { ...validSubmission, attestedHumanReview: false, manifestFingerprint: manifest.fingerprint },
+      { ...validSubmission, manifestFingerprint: 'sha256:stale' },
     ]) {
       expect(() => validateClinicalReviewSubmission(input, manifest)).toThrow();
     }
-    expect(
-      createClinicalReviewDecision({
-        id: 'review-1',
-        binding,
-        manifest,
-        reviewerOwnerId: 'owner-from-session',
-        input: {
-          credential: 'RRT',
-          attestedHumanReview: true,
+
+    const decision = createClinicalReviewDecision({
+      id: 'review-1',
+      binding,
+      manifest,
+      reviewerOwnerId: 'owner-from-session',
+      input: {
+        ...validSubmission,
+        reviewerName: '  Brianna Yonkin  ',
+        jurisdiction: ' Texas ',
+        relevantRoleOrExperience: ' Practicing adult acute/ICU respiratory therapist ',
+        manifestFingerprint: manifest.fingerprint,
+      },
+      now: '2026-09-14T12:00:00.000Z',
+    });
+    expect(decision).toMatchObject({
+      reviewerOwnerId: 'owner-from-session',
+      reviewerName: 'Brianna Yonkin',
+      credential: 'RRT',
+      jurisdiction: 'Texas',
+      relevantRoleOrExperience: 'Practicing adult acute/ICU respiratory therapist',
+      manifestFingerprint: manifest.fingerprint,
+    });
+  });
+
+  it('rejects malformed reviewer fields with a bounded validation error', () => {
+    const manifest = buildClinicalReviewManifest(document, binding);
+    expect(() =>
+      validateClinicalReviewSubmission(
+        {
+          ...validSubmission,
+          reviewerName: undefined as never,
           manifestFingerprint: manifest.fingerprint,
         },
-        now: '2026-09-14T12:00:00.000Z',
-      }).reviewerOwnerId,
-    ).toBe('owner-from-session');
+        manifest,
+      ),
+    ).toThrow('Reviewer name is required.');
   });
 
   it('captures the exact manifest instead of a mutable reference', () => {
@@ -54,8 +92,7 @@ describe('clinical review submissions', () => {
       manifest,
       reviewerOwnerId: 'owner-1',
       input: {
-        credential: 'RRT',
-        attestedHumanReview: true,
+        ...validSubmission,
         manifestFingerprint: manifest.fingerprint,
       },
       now: '2026-09-14T12:00:00.000Z',
