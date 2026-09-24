@@ -205,11 +205,15 @@ function state(initial = course()) {
     };
   });
   const loadDocument = vi.fn(async (stageId: string) => (stageId === doc.stage.id ? doc : null));
+  const saveDocument = vi.fn(async (next: CourseDocument) => {
+    doc = structuredClone(next);
+  });
   return {
-    store: { loadDocument, putScene } as unknown as CourseStore,
+    store: { loadDocument, putScene, saveDocument } as unknown as CourseStore,
     get: () => doc,
     putScene,
     loadDocument,
+    saveDocument,
   };
 }
 
