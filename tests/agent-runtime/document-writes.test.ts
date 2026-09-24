@@ -42,17 +42,25 @@ function makeStore(overrides: {
 describe('putSceneBringingCurrent', () => {
   it('uses the incremental write when the document is current', async () => {
     const putScene = vi.fn(async () => {});
-    const store = makeStore({ putScene });
+    const loadDocument = vi.fn(async () => ({
+      stage,
+      scenes: [lineScene],
+      outline: { generationComplete: false },
+    }));
+    const saveDocument = vi.fn(async () => {});
+    const store = makeStore({ putScene, loadDocument, saveDocument });
 
     await putSceneBringingCurrent(store, stage.id, lineScene);
 
     expect(putScene).toHaveBeenCalledExactlyOnceWith(stage.id, lineScene);
+    expect(loadDocument).toHaveBeenCalledExactlyOnceWith(stage.id);
+    expect(saveDocument).not.toHaveBeenCalled();
   });
 
   it('falls back to an aggregate save with the scene spliced in on not-current', async () => {
     const otherA = scene('scene-a', 0);
     const otherB = scene('scene-b', 2);
-    const doc = { stage, scenes: [otherA, otherB] };
+    const doc = { stage, scenes: [otherA, otherB], outline: { generationComplete: false } };
     const putScene = vi.fn(async () => {
       throw staleError();
     });
@@ -62,7 +70,9 @@ describe('putSceneBringingCurrent', () => {
 
     await putSceneBringingCurrent(store, stage.id, lineScene);
 
-    expect(loadDocument).toHaveBeenCalledExactlyOnceWith(stage.id);
+    expect(loadDocument).toHaveBeenCalledTimes(2);
+    expect(loadDocument).toHaveBeenNthCalledWith(1, stage.id);
+    expect(loadDocument).toHaveBeenNthCalledWith(2, stage.id);
     expect(saveDocument).toHaveBeenCalledTimes(1);
     const saved = saveDocument.mock.calls[0]![0]!;
     // the written scene replaced nothing (new id) but landed in order,
@@ -75,7 +85,7 @@ describe('putSceneBringingCurrent', () => {
 
   it('replaces an existing scene by id in the fallback save', async () => {
     const existing = scene('scene-line', 1);
-    const doc = { stage, scenes: [existing] };
+    const doc = { stage, scenes: [existing], outline: { generationComplete: false } };
     const putScene = vi.fn(async () => {
       throw staleError();
     });
