@@ -20,7 +20,11 @@ import {
   type KVStore,
 } from '@openmaic/storage';
 
-import { createKVPersistStorage, DEFAULT_RECOVERY_BACKOFF_MS } from '@/lib/store/kv-persist';
+import {
+  createKVPersistStorage,
+  DEFAULT_RECOVERY_BACKOFF_MS,
+  type DisposablePersistStorage,
+} from '@/lib/store/kv-persist';
 import {
   resetPersistHealth,
   subscribeToPersistHealth,
@@ -35,6 +39,8 @@ import {
 const flushTasks = async () => {
   for (let i = 0; i < 12; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
 };
+
+const adapters = new Set<DisposablePersistStorage<Prefs>>();
 
 /**
  * A `KVStore` decorator that can be told to fail, or to hold an operation until
@@ -146,7 +152,11 @@ function harness() {
     backing,
     kv,
     /** A fresh adapter over the same KV backend — what a page reload builds. */
-    storage: (scope: KVScope = 'account') => createKVPersistStorage<Prefs>(scope, { kv }),
+    storage: (scope: KVScope = 'account') => {
+      const storage = createKVPersistStorage<Prefs>(scope, { kv });
+      adapters.add(storage);
+      return storage;
+    },
   };
 }
 
@@ -171,6 +181,8 @@ beforeEach(() => {
   subscribeToPersistHealth((event) => health.push(event));
 });
 afterEach(() => {
+  for (const adapter of adapters) adapter.dispose();
+  adapters.clear();
   vi.restoreAllMocks();
   resetPersistHealth();
 });
@@ -658,8 +670,9 @@ describe('createKVPersistStorage — unreachable browser storage is a failure, n
 
   it('signals instead of hydrating an empty store in silence', async () => {
     const restore = withHostileLocalStorage();
+    let persist: DisposablePersistStorage<Prefs> | null = null;
     try {
-      const persist = createKVPersistStorage<Prefs>('account');
+      persist = createKVPersistStorage<Prefs>('account');
 
       expect(await persist.getItem(NAME)).toBeNull();
       await persist.setItem(NAME, { state: { nickname: 'lost' } });
@@ -667,16 +680,19 @@ describe('createKVPersistStorage — unreachable browser storage is a failure, n
 
       expect(problems()).toEqual([NAME]);
     } finally {
+      persist?.dispose();
       restore();
     }
   });
 
   it('reports a clear it could not perform', async () => {
     const restore = withHostileLocalStorage();
+    let persist: DisposablePersistStorage<Prefs> | null = null;
     try {
-      const persist = createKVPersistStorage<Prefs>('account');
+      persist = createKVPersistStorage<Prefs>('account');
       await expect(persist.removeItem(NAME)).rejects.toThrow(/unreachable/);
     } finally {
+      persist?.dispose();
       restore();
     }
   });
@@ -790,6 +806,58 @@ describe('createKVPersistStorage — recovery is bounded and re-armable', () => 
     await flushTasks();
 
     expect(asked).toHaveLength(2);
+  });
+});
+
+describe('createKVPersistStorage — recovery lifecycle', () => {
+  it('does not publish a delayed recovery after its adapter is disposed', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.kv.failGet = true;
+      const persist = createKVPersistStorage<Prefs>('account', {
+        kv: h.kv,
+        recoveryBackoffMs: [25],
+      });
+
+      await persist.getItem(NAME);
+      await persist.setItem(NAME, { state: { nickname: 'lost' } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(problems()).toEqual([NAME]);
+
+      resetPersistHealth();
+      health = [];
+      subscribeToPersistHealth((event) => health.push(event));
+      persist.dispose();
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(health).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not invoke a recovery callback after its timer has fired and the adapter is disposed', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.kv.failGet = true;
+      const onWriteRefused = vi.fn();
+      const persist = createKVPersistStorage<Prefs>('account', {
+        kv: h.kv,
+        onWriteRefused,
+        recoveryBackoffMs: [25],
+      });
+
+      await persist.getItem(NAME);
+      vi.advanceTimersByTime(25);
+      persist.dispose();
+      await Promise.resolve();
+
+      expect(onWriteRefused).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
