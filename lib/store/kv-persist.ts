@@ -104,7 +104,7 @@ interface KeyStateHooks {
    * finished, so the machine can tell a settle caused by a recovery from one
    * caused by ordinary use.
    */
-  requestRecovery: (name: string, delayMs: number, done: () => void) => void;
+  requestRecovery: (name: string, delayMs: number, done: () => void) => () => void;
   /** Delay before each attempt. Its length is the cap on attempts. */
   backoffMs: readonly number[];
 }
@@ -176,6 +176,8 @@ class KeyState<S> {
   #recoveryAttempts = 0;
   #recoveryInFlight = false;
   #recoveryExhausted = false;
+  #cancelRecovery: (() => void) | null = null;
+  #disposed = false;
 
   constructor(
     private readonly name: string,
@@ -184,6 +186,14 @@ class KeyState<S> {
 
   get phase(): KeyPhase {
     return this.#phase;
+  }
+
+  /** Stop detached recovery work when the persistence adapter is torn down. */
+  dispose(): void {
+    this.#disposed = true;
+    this.#cancelRecovery?.();
+    this.#cancelRecovery = null;
+    this.#recoveryInFlight = false;
   }
 
   /**
@@ -381,7 +391,7 @@ class KeyState<S> {
    * if nothing had been retried at all.
    */
   #askForRecovery(): void {
-    if (this.#recoveryInFlight || this.#recoveryExhausted) return;
+    if (this.#disposed || this.#recoveryInFlight || this.#recoveryExhausted) return;
     const { backoffMs } = this.hooks;
     if (this.#recoveryAttempts >= backoffMs.length) {
       this.#recoveryExhausted = true;
@@ -398,7 +408,10 @@ class KeyState<S> {
     }
     const delayMs = backoffMs[this.#recoveryAttempts++] ?? 0;
     this.#recoveryInFlight = true;
-    this.hooks.requestRecovery(this.name, delayMs, () => this.#onRecoveryFinished());
+    this.#cancelRecovery = this.hooks.requestRecovery(this.name, delayMs, () => {
+      if (this.#disposed) return;
+      this.#onRecoveryFinished();
+    });
   }
 
   /**
@@ -409,6 +422,7 @@ class KeyState<S> {
    */
   #onRecoveryFinished(): void {
     this.#recoveryInFlight = false;
+    this.#cancelRecovery = null;
     const owed = this.#refused !== null || this.#replay !== null;
     if (this.#phase === 'unavailable' || owed) this.#askForRecovery();
   }
@@ -447,6 +461,11 @@ export interface KVPersistDeps {
    */
   recoveryBackoffMs?: readonly number[];
 }
+
+/** A persist adapter whose detached recovery work can be cancelled by its owner. */
+export type DisposablePersistStorage<S> = PersistStorage<S> & {
+  dispose(): void;
+};
 
 /** Three tries, spread out enough that a transient fault has time to clear. */
 export const DEFAULT_RECOVERY_BACKOFF_MS: readonly number[] = [0, 250, 1000];
@@ -519,7 +538,7 @@ export function purgeLegacyPersistKey(name: string): void {
 export function createKVPersistStorage<S>(
   scope: KVScope,
   deps: KVPersistDeps = {},
-): PersistStorage<S> {
+): DisposablePersistStorage<S> {
   // Resolved per call rather than once: the store module is evaluated during
   // SSR as well, where there is no storage to bind to yet.
   const resolveKvStorage = (): PersistStorageLike<S> | null => {
@@ -540,6 +559,7 @@ export function createKVPersistStorage<S>(
   };
 
   const states = new Map<string, KeyState<S>>();
+  let disposed = false;
   function stateFor(name: string): KeyState<S> {
     let state = states.get(name);
     if (!state) {
@@ -551,12 +571,14 @@ export function createKVPersistStorage<S>(
         // work — the key stays unavailable and its notice stands, so there is
         // nothing to do but say what happened.
         requestRecovery: (key, delayMs, done) => {
-          setTimeout(() => {
+          const timer = setTimeout(() => {
+            if (disposed) return;
             void Promise.resolve()
-              .then(() => deps.onWriteRefused?.(key))
+              .then(() => (disposed ? undefined : deps.onWriteRefused?.(key)))
               .catch((error) => log.error(`Recovery attempt for "${key}" failed:`, error))
               .finally(done);
           }, delayMs);
+          return () => clearTimeout(timer);
         },
       });
       states.set(name, state);
@@ -628,6 +650,12 @@ export function createKVPersistStorage<S>(
   }
 
   return {
+    dispose() {
+      disposed = true;
+      for (const state of states.values()) state.dispose();
+      states.clear();
+      queues.clear();
+    },
     getItem(name) {
       const state = stateFor(name);
       return serial(name, async () => {
