@@ -9,10 +9,21 @@ import { BrowserQaControl } from '@/components/workbench/BrowserQaControl';
 let root: Root | null = null;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function mount(response: Record<string, unknown>): Promise<HTMLDivElement> {
+type FetchStub = (input: RequestInfo | URL, init?: RequestInit) => Promise<unknown>;
+
+async function mount(
+  response: Record<string, unknown> | Error | FetchStub,
+): Promise<HTMLDivElement> {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => ({ ok: true, json: async () => response })),
+    vi.fn(
+      typeof response === 'function'
+        ? response
+        : async () => {
+            if (response instanceof Error) throw response;
+            return { ok: true, json: async () => response };
+          },
+    ),
   );
   const host = document.createElement('div');
   document.body.appendChild(host);
@@ -49,5 +60,26 @@ describe('BrowserQaControl generation readiness', () => {
       '[data-testid="workbench-run-learner-qa"]',
     );
     expect(button?.disabled).toBe(false);
+  });
+
+  it('reports an unavailable status when the readiness request fails', async () => {
+    const host = await mount(new Error('offline'));
+
+    expect(host.textContent).toContain('QA status is unavailable.');
+  });
+
+  it('aborts an in-flight readiness request when unmounted', async () => {
+    let requestSignal: AbortSignal | null = null;
+    await mount(
+      async (_input, init) =>
+        new Promise(() => {
+          requestSignal = init?.signal as AbortSignal;
+        }),
+    );
+
+    expect(requestSignal?.aborted).toBe(false);
+    await act(async () => root?.unmount());
+    root = null;
+    expect(requestSignal?.aborted).toBe(true);
   });
 });

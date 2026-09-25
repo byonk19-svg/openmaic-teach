@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ClipboardCheck, LoaderCircle } from 'lucide-react';
 
 type Status = 'idle' | 'running' | 'completed' | 'failed';
@@ -16,15 +16,44 @@ type AuditState = {
 
 export function BrowserQaControl({ stageId }: { readonly stageId: string }) {
   const [state, setState] = useState<AuditState>({ status: 'idle' });
-  const refresh = useCallback(async () => {
-    const response = await fetch(`/api/browser-audit/${encodeURIComponent(stageId)}`);
-    if (response.ok) setState(await response.json());
-  }, [stageId]);
+  const mounted = useRef(false);
   useEffect(() => {
-    const refreshTimer = window.setTimeout(() => void refresh(), 0);
-    if (state.status !== 'running') return () => window.clearTimeout(refreshTimer);
-    const timer = window.setInterval(() => void refresh(), 1000);
+    mounted.current = true;
     return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const response = await fetch(`/api/browser-audit/${encodeURIComponent(stageId)}`, {
+          signal,
+        });
+        if (response.ok) {
+          const next = (await response.json()) as AuditState;
+          if (mounted.current && !signal?.aborted) setState(next);
+        }
+      } catch (error) {
+        if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError'))
+          return;
+        if (mounted.current) setState({ status: 'failed', error: 'QA status is unavailable.' });
+      }
+    },
+    [stageId],
+  );
+  useEffect(() => {
+    if (state.status === 'failed') return;
+    const controller = new AbortController();
+    const refreshTimer = window.setTimeout(() => void refresh(controller.signal), 0);
+    if (state.status !== 'running') {
+      return () => {
+        controller.abort();
+        window.clearTimeout(refreshTimer);
+      };
+    }
+    const timer = window.setInterval(() => void refresh(controller.signal), 1000);
+    return () => {
+      controller.abort();
       window.clearTimeout(refreshTimer);
       window.clearInterval(timer);
     };

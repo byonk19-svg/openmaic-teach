@@ -37,6 +37,9 @@ vi.mock('@/lib/workbench/use-workbench-pro-edit', () => ({
 vi.mock('@/components/workbench/workspace/WorkspaceCourseTabs', () => ({
   WorkspaceCourseTabs: () => null,
 }));
+vi.mock('@/components/workbench/BrowserQaControl', () => ({
+  BrowserQaControl: () => null,
+}));
 vi.mock('@/lib/store/stage', () => ({
   useStageStore: (selector: (state: { scenes: unknown[] }) => unknown) =>
     selector({ scenes: [{ id: 'scene-1' }] }),
